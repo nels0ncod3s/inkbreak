@@ -853,6 +853,8 @@ let storyStage = 0;
 let storyNextAt = 0;
 let storyKills = 0;
 let storyKillsRequired = 0;
+let storyEncounterSerial = 0;
+let activeStoryEncounterId = 0;
 let storyCompletionAt = 0;
 let storyInputLocked = false;
 let storyDialogueBlocking = false;
@@ -1073,7 +1075,8 @@ function createEnemy(index) {
     flinch: 0, headFlinch: 0, flinchDir: 1,
     knockbackOffset: new THREE.Vector3(), knockbackVelocity: new THREE.Vector3(),
     deathStart: 0, deathDuration: 680, deathDir: Math.random() < .5 ? -1 : 1,
-    bossPhase: 1, lastBossPhase: 1
+    bossPhase: 1, lastBossPhase: 1,
+    storyEncounterId: 0
   };
   scene.add(group);
   group.visible = false;
@@ -1199,6 +1202,7 @@ function deactivateEnemy(enemy) {
   enemy.alive = false;
   enemy.dying = false;
   enemy.activeInRound = false;
+  enemy.storyEncounterId = 0;
   enemy.group.visible = false;
   enemy.hp = 0;
   enemy.availableAt = performance.now() + 250;
@@ -1382,8 +1386,10 @@ function startEnemyDeath(enemy, part) {
   spawnDeathScribbles(enemy, part === 'head');
   playImpactSound('kill');
 
-  if (gameMode === 'story') storyKills += 1;
-  else roundKills += 1;
+  if (gameMode === 'story') {
+    // Only enemies belonging to the current scripted encounter advance Story Mode.
+    if (enemy.storyEncounterId && enemy.storyEncounterId === activeStoryEncounterId) storyKills += 1;
+  } else roundKills += 1;
   totalKills += 1;
   updateRoundHud();
   if (enemy.type === 'artist') {
@@ -1644,6 +1650,7 @@ function resetRunToBoot() {
   storyNextAt = 0;
   storyKills = 0;
   storyKillsRequired = 0;
+  activeStoryEncounterId = 0;
   storyCompletionAt = 0;
   storyInputLocked = false;
   storyDialogueBlocking = false;
@@ -1855,16 +1862,75 @@ function advanceStoryDialogue() {
   done?.();
 }
 
+function storySpawnIsSafe(point, radius = .62) {
+  if (!point || point.length < 2) return false;
+  const [x, z] = point;
+  const hx = STORY_SIZE_X / 2 - 1.4;
+  const hz = STORY_SIZE_Z / 2 - 1.4;
+  if (x < STORY_X - hx || x > STORY_X + hx || z < STORY_Z - hz || z > STORY_Z + hz) return false;
+  return enemyCanMoveAt(x, z, radius);
+}
+
+function findSafeStorySpawn(preferred, occupied = []) {
+  // Start with the authored position, then search nearby rings. This prevents a
+  // contact from being placed inside a building if the story map changes later.
+  const candidates = [preferred];
+  const radii = [1.8, 3.2, 4.8, 6.4];
+  for (const r of radii) {
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      candidates.push([preferred[0] + Math.cos(a) * r, preferred[1] + Math.sin(a) * r]);
+    }
+  }
+
+  // Hand-authored fallback positions in the open central street.
+  candidates.push(
+    [STORY_X - 4.5, -13.8], [STORY_X + 3.8, -14.4],
+    [STORY_X - 1.8, -19.6], [STORY_X + 3.0, -21.0],
+    [STORY_X - 5.8, -17.0], [STORY_X + 5.0, -16.0]
+  );
+
+  return candidates.find(candidate => {
+    if (!storySpawnIsSafe(candidate)) return false;
+    if (occupied.some(other => Math.hypot(candidate[0] - other[0], candidate[1] - other[1]) < 2.4)) return false;
+    // Don't place an enemy directly on top of the player during a scripted ambush.
+    if (Math.hypot(camera.position.x - candidate[0], camera.position.z - candidate[1]) < 4.0) return false;
+    return true;
+  }) || [STORY_X, -18 - occupied.length * 2.5];
+}
+
+function activeStoryContactCount() {
+  return enemies.filter(enemy =>
+    enemy.storyEncounterId === activeStoryEncounterId &&
+    enemy.activeInRound &&
+    (enemy.alive || enemy.dying)
+  ).length;
+}
+
 function spawnStoryContacts(types = ['rifleman', 'rifleman'], points = null) {
   enemies.forEach(deactivateEnemy);
   const available = enemies.filter(e => !e.activeInRound && !e.alive && !e.dying);
   const defaults = [
     [STORY_X - 5.5, -15.2], [STORY_X + 5.0, -17.0],
-    [STORY_X - 2.8, -18.7], [STORY_X + 8.2, -13.3]
+    [STORY_X - 2.8, -18.7], [STORY_X + 6.0, -14.2]
   ];
+  const requested = points || defaults;
+  const occupied = [];
+  activeStoryEncounterId = ++storyEncounterSerial;
+
   types.forEach((type, i) => {
-    if (available[i]) configureEnemy(available[i], type, (points || defaults)[i] || defaults[i % defaults.length]);
+    const enemy = available[i];
+    if (!enemy) return;
+    const preferred = requested[i] || defaults[i % defaults.length];
+    const safeSpawn = findSafeStorySpawn(preferred, occupied);
+    occupied.push(safeSpawn);
+    configureEnemy(enemy, type, safeSpawn);
+    enemy.storyEncounterId = activeStoryEncounterId;
+    // Give the newly placed contacts a small delay before their first shot so
+    // every model has time to visibly enter the encounter.
+    enemy.nextShotAt = Math.max(enemy.nextShotAt, performance.now() + 700 + i * 120);
   });
+
   storyKills = 0;
   storyKillsRequired = types.length;
   roundState = 'active';
@@ -1955,7 +2021,7 @@ function updateStoryMode(now, dt) {
       });
     }
   } else if (storyState === 'combatOne') {
-    if (storyKills >= storyKillsRequired && activeEnemyCount() === 0) {
+    if (storyKills >= storyKillsRequired && activeStoryContactCount() === 0) {
       storyState = 'relay';
       roundState = 'story';
       setStoryMarker(STORY_RELAY, true);
@@ -1982,13 +2048,16 @@ function updateStoryMode(now, dt) {
         storyState = 'combatTwo';
         showStoryDialogue('MARA // RADIO', 'Second wave incoming.', 'SURVIVE THE AMBUSH');
         spawnStoryContacts(['rusher', 'rifleman', 'rifleman'], [
-          [STORY_X + 1.0, -17.5], [STORY_X - 7.5, -15.0], [STORY_X + 8.0, -18.5]
+          [STORY_X + 1.0, -17.5],
+          [STORY_X - 7.5, -15.0],
+          // Kept in the open central street; the old +8/-18.5 point sat inside a building.
+          [STORY_X + 3.5, -21.0]
         ]);
         playRoundStinger('round');
       });
     }
   } else if (storyState === 'combatTwo') {
-    if (storyKills >= storyKillsRequired && activeEnemyCount() === 0) {
+    if (storyKills >= storyKillsRequired && activeStoryContactCount() === 0) {
       storyState = 'extract';
       roundState = 'story';
       setStoryMarker(STORY_EXTRACTION, true);
