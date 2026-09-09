@@ -48,6 +48,12 @@ const storyHudEl = document.querySelector('#story-hud');
 const storyObjectiveTextEl = document.querySelector('#story-objective-text');
 const storySpeakerEl = document.querySelector('#story-speaker');
 const storyDialogueTextEl = document.querySelector('#story-dialogue-text');
+const storyWakeOverlayEl = document.querySelector('#story-wake-overlay');
+const storyDialogueScreenEl = document.querySelector('#story-dialogue-screen');
+const storyScreenKickerEl = document.querySelector('#story-screen-kicker');
+const storyScreenSpeakerEl = document.querySelector('#story-screen-speaker');
+const storyScreenTextEl = document.querySelector('#story-screen-text');
+const storyDialogueProgressEl = document.querySelector('#story-dialogue-progress');
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(PAPER);
@@ -162,12 +168,22 @@ controls.addEventListener('unlock', () => {
 
 const keys = Object.create(null);
 window.addEventListener('keydown', (e) => {
+  if (gameMode === 'story' && storyDialogueBlocking && ['Space', 'Enter'].includes(e.code) && !e.repeat) {
+    e.preventDefault();
+    advanceStoryDialogue();
+    return;
+  }
+  if (gameMode === 'story' && storyInputLocked) {
+    if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ControlLeft', 'ControlRight', 'KeyC', 'KeyQ'].includes(e.code)) e.preventDefault();
+    return;
+  }
+
   keys[e.code] = true;
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ControlLeft', 'ControlRight'].includes(e.code)) e.preventDefault();
   if (e.code === 'Space' && !e.repeat) tryJump();
   if (e.code === 'KeyQ' && !e.repeat) tryDash();
   if (['ControlLeft', 'ControlRight', 'KeyC'].includes(e.code) && !e.repeat) tryStartSlide();
-  if (!e.repeat && /^Digit[1-6]$/.test(e.code)) switchWeaponBySlot(Number(e.code.slice(-1)));
+  if (!e.repeat && /^Digit[0-6]$/.test(e.code)) switchWeaponBySlot(Number(e.code.slice(-1)));
 });
 window.addEventListener('keyup', (e) => keys[e.code] = false);
 
@@ -354,19 +370,20 @@ function buildSniperPlatform() {
   makeSketchBox({ x: towerX - 2.35, y: 2.1, z: towerZ, w: .34, h: 4.2, d: 5.0, shade: true });
   makeSketchBox({ x: towerX + 2.35, y: 2.1, z: towerZ, w: .34, h: 4.2, d: 5.0, shade: true });
 
-  // Stair blocks grow upward from the floor. This avoids floaty geometry and gives
-  // the step-up system clean collider tops to work with.
-  for (let i = 0; i < 8; i++) {
-    const top = .50 * (i + 1);
+  // Deliberately chunky, overlapping stair blocks. Earlier decorative rotations
+  // created tiny gaps in the collision boxes, so these are now dead-straight and
+  // overlap each other enough that the controller always has a top surface underfoot.
+  for (let i = 0; i < 9; i++) {
+    const top = .45 * (i + 1);
     makeSketchBox({
       x: towerX,
       y: top / 2,
-      z: towerZ + 8.75 - i * .75,
-      w: 2.7,
+      z: towerZ + 8.2 - i * .80,
+      w: 3.15,
       h: top,
-      d: .82,
+      d: 1.18,
       shade: i % 2 === 0,
-      rotationY: (i % 2 ? -.012 : .012)
+      rotationY: 0
     });
   }
 
@@ -442,6 +459,7 @@ const STORY_SIZE_X = 46;
 const STORY_SIZE_Z = 52;
 const STORY_SPAWN = new THREE.Vector3(STORY_X, 1.72, 20);
 const STORY_SIGNAL = new THREE.Vector3(STORY_X, 0, -3);
+const STORY_RELAY = new THREE.Vector3(STORY_X + 6.2, 0, -11.2);
 const STORY_EXTRACTION = new THREE.Vector3(STORY_X, 0, -21);
 let storyMarker = null;
 
@@ -486,6 +504,11 @@ function buildStoryMap() {
   makeSketchBox({ x: STORY_X - 5.7, y: 1.4, z: -8, w: .65, h: 2.8, d: 4.8, shade: true });
   makeSketchBox({ x: STORY_X + 5.7, y: 1.4, z: -8, w: .65, h: 2.8, d: 4.8, shade: true });
   makeSketchBox({ x: STORY_X, y: 2.65, z: -8, w: 11.0, h: .45, d: .55, shade: true });
+
+  // Relay station used by the expanded prologue objective.
+  makeSketchBox({ x: STORY_RELAY.x, y: .78, z: STORY_RELAY.z, w: 1.5, h: 1.56, d: 1.5, shade: true, rotationY: .05 });
+  makeSketchBox({ x: STORY_RELAY.x, y: 1.95, z: STORY_RELAY.z, w: .16, h: 2.35, d: .16, shade: true });
+  makeLabel('RELAY?', new THREE.Vector3(STORY_RELAY.x, 3.45, STORY_RELAY.z), 0, .48);
 
   makeLabel('MARGIN DISTRICT', new THREE.Vector3(STORY_X, 4.2, 15), 0, .85);
   makeLabel('SIGNAL ↓', new THREE.Vector3(STORY_X, .12, -1.5), 0, .56);
@@ -689,6 +712,11 @@ function buildMagazine(parent) {
 
 const seatedMagazine = buildMagazine(weaponRig);
 const MAG_SEATED_POS = new THREE.Vector3(0, -.235, -.055);
+function getCurrentMagSeat(out = new THREE.Vector3()) {
+  const profile = typeof currentWeapon === 'function' ? currentWeapon() : null;
+  const pos = profile?.magPos || [MAG_SEATED_POS.x, MAG_SEATED_POS.y, MAG_SEATED_POS.z];
+  return out.set(...pos);
+}
 seatedMagazine.position.copy(MAG_SEATED_POS);
 
 // A second magazine is hidden off-screen until the hand brings it up.
@@ -824,7 +852,15 @@ let storyState = 'boot';
 let storyStage = 0;
 let storyNextAt = 0;
 let storyKills = 0;
+let storyKillsRequired = 0;
 let storyCompletionAt = 0;
+let storyInputLocked = false;
+let storyDialogueBlocking = false;
+let storyDialogueQueue = [];
+let storyDialogueIndex = 0;
+let storyDialogueOnComplete = null;
+let storyWakeStartedAt = 0;
+let storyWakeOpening = false;
 
 let audioContext = null;
 let masterGainNode = null;
@@ -922,6 +958,11 @@ function playTone(freq, endFreq, duration, volume = .025, type = 'triangle') {
 }
 
 function playGunSound(id) {
+  if (id === 'knife') {
+    playNoiseBurst(.018, .075, 2600);
+    playTone(260, 120, .07, .012, 'triangle');
+    return;
+  }
   const profiles = {
     carbine: [112, 68, .07, .042, 1600], pistol: [150, 82, .065, .036, 2100],
     shotgun: [88, 42, .13, .065, 1050], smg: [132, 78, .048, .027, 1800],
@@ -1163,6 +1204,111 @@ function deactivateEnemy(enemy) {
   enemy.availableAt = performance.now() + 250;
 }
 
+const deathChunks = [];
+
+function spawnDeathChunks(enemy, headshot = false) {
+  enemy.group.updateMatrixWorld(true);
+  const isBoss = enemy.type === 'guardian' || enemy.type === 'artist';
+  const chunksPerPart = isBoss ? 5 : (headshot ? 4 : 3);
+  const center = enemy.group.position.clone().add(new THREE.Vector3(0, 1.05, 0));
+  const worldPos = new THREE.Vector3();
+
+  enemy.parts.forEach((part, partIndex) => {
+    if (!part.visible) return;
+    part.getWorldPosition(worldPos);
+    const localCount = part.userData.hitPart === 'head' && headshot ? chunksPerPart + 2 : chunksPerPart;
+    for (let i = 0; i < localCount; i++) {
+      const size = (isBoss ? .13 : .085) + Math.random() * (isBoss ? .22 : .14);
+      const geometry = new THREE.BoxGeometry(size * (0.75 + Math.random()*.6), size * (0.75 + Math.random()*.7), size * (0.75 + Math.random()*.6));
+      const material = new THREE.MeshBasicMaterial({
+        color: (partIndex + i) % 3 === 0 ? PAPER_SHADE : PAPER_BRIGHT,
+        transparent: true,
+        opacity: 1
+      });
+      const cube = new THREE.Mesh(geometry, material);
+      cube.position.copy(worldPos).add(new THREE.Vector3(
+        (Math.random() - .5) * .24,
+        (Math.random() - .5) * .30,
+        (Math.random() - .5) * .24
+      ));
+      cube.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, Math.random()*Math.PI);
+      addSketchOutlines(cube, geometry, true);
+      scene.add(cube);
+
+      const away = cube.position.clone().sub(center);
+      away.y = Math.max(.15, away.y);
+      if (away.lengthSq() < .01) away.set(Math.random()-.5, .4, Math.random()-.5);
+      away.normalize();
+      const burst = isBoss ? 4.8 : (headshot ? 4.1 : 3.2);
+      const velocity = away.multiplyScalar(burst * (.55 + Math.random()*.75));
+      velocity.y += (isBoss ? 2.8 : 1.9) + Math.random() * (headshot ? 2.5 : 1.6);
+
+      deathChunks.push({
+        mesh: cube,
+        velocity,
+        spin: new THREE.Vector3(
+          (Math.random()-.5) * 13,
+          (Math.random()-.5) * 13,
+          (Math.random()-.5) * 13
+        ),
+        born: performance.now(),
+        duration: isBoss ? 2600 + Math.random()*700 : 1450 + Math.random()*650,
+        bounces: 0,
+        ground: .035 + size * .45
+      });
+    }
+  });
+
+  playNoiseBurst(isBoss ? .05 : .03, isBoss ? .18 : .11, 1250);
+  playTone(isBoss ? 92 : 138, 54, isBoss ? .20 : .11, isBoss ? .028 : .016, 'square');
+}
+
+function updateDeathChunks(now, dt) {
+  for (let i = deathChunks.length - 1; i >= 0; i--) {
+    const fx = deathChunks[i];
+    const age = now - fx.born;
+    const t = THREE.MathUtils.clamp(age / fx.duration, 0, 1);
+
+    fx.velocity.y -= 9.4 * dt;
+    fx.mesh.position.addScaledVector(fx.velocity, dt);
+    fx.mesh.rotation.x += fx.spin.x * dt;
+    fx.mesh.rotation.y += fx.spin.y * dt;
+    fx.mesh.rotation.z += fx.spin.z * dt;
+    fx.spin.multiplyScalar(Math.exp(-1.35 * dt));
+
+    if (fx.mesh.position.y < fx.ground) {
+      fx.mesh.position.y = fx.ground;
+      if (Math.abs(fx.velocity.y) > .7 && fx.bounces < 3) {
+        fx.velocity.y = Math.abs(fx.velocity.y) * .34;
+        fx.velocity.x *= .72;
+        fx.velocity.z *= .72;
+        fx.bounces += 1;
+      } else {
+        fx.velocity.y = 0;
+        fx.velocity.x *= Math.exp(-7 * dt);
+        fx.velocity.z *= Math.exp(-7 * dt);
+      }
+    }
+
+    const fade = t < .70 ? 1 : 1 - ((t - .70) / .30);
+    fx.mesh.material.opacity = Math.max(0, fade);
+    fx.mesh.children.forEach(child => {
+      if (child.material?.transparent) child.material.opacity = Math.max(0, fade * .78);
+    });
+    const shrink = t < .82 ? 1 : Math.max(.03, 1 - (t - .82) / .18);
+    fx.mesh.scale.setScalar(shrink);
+
+    if (t >= 1) {
+      fx.mesh.traverse(obj => {
+        if (obj.geometry) obj.geometry.dispose?.();
+        if (obj.material && obj.material !== paperMaterial && obj.material !== paperShadeMaterial) obj.material.dispose?.();
+      });
+      scene.remove(fx.mesh);
+      deathChunks.splice(i, 1);
+    }
+  }
+}
+
 const deathScribbles = [];
 function spawnDeathScribbles(enemy, headshot = false) {
   const group = new THREE.Group();
@@ -1232,6 +1378,7 @@ function startEnemyDeath(enemy, part) {
   enemy.deathStart = performance.now();
   enemy.deathDir = Math.random() < .5 ? -1 : 1;
   clearEnemyAimLine(enemy);
+  spawnDeathChunks(enemy, part === 'head');
   spawnDeathScribbles(enemy, part === 'head');
   playImpactSound('kill');
 
@@ -1460,9 +1607,10 @@ function updateRoundHud() {
     pageLabelEl.textContent = 'CHAPTER';
     pageCountEl.textContent = 'ZERO';
     roundLabelEl.textContent = 'SECTION';
-    roundCountEl.textContent = storyState === 'complete' ? 'COMPLETE' : 'THE MARGIN';
-    targetLabelEl.textContent = storyState === 'combat' ? 'CONTACTS' : 'SIGNAL';
-    targetCountEl.textContent = storyState === 'combat' ? `${storyKills} / 2` : (storyState === 'extract' ? 'EXIT' : '---');
+    roundCountEl.textContent = storyState === 'complete' ? 'COMPLETE' : (storyState === 'combatTwo' ? 'RELAY AMBUSH' : (storyState === 'relay' || storyState === 'relayDialogue' ? 'THE RELAY' : 'THE MARGIN'));
+    const inCombat = storyState === 'combatOne' || storyState === 'combatTwo';
+    targetLabelEl.textContent = inCombat ? 'CONTACTS' : (storyState === 'relay' ? 'RELAY' : 'SIGNAL');
+    targetCountEl.textContent = inCombat ? `${storyKills} / ${storyKillsRequired}` : (storyState === 'extract' ? 'EXIT' : '---');
     return;
   }
   const def = ROUND_DEFINITIONS[currentRoundIndex];
@@ -1495,7 +1643,19 @@ function resetRunToBoot() {
   storyStage = 0;
   storyNextAt = 0;
   storyKills = 0;
+  storyKillsRequired = 0;
   storyCompletionAt = 0;
+  storyInputLocked = false;
+  storyDialogueBlocking = false;
+  storyDialogueQueue = [];
+  storyDialogueIndex = 0;
+  storyDialogueOnComplete = null;
+  storyWakeStartedAt = 0;
+  storyWakeOpening = false;
+  storyWakeOverlayEl.classList.remove('visible', 'opening');
+  storyDialogueScreenEl.classList.remove('visible');
+  document.body.classList.remove('story-dialogue-open');
+  controls.pointerSpeed = Number(sensitivitySetting?.value || .78);
   storyHudEl.classList.remove('visible');
   if (storyMarker) storyMarker.visible = false;
 
@@ -1528,6 +1688,7 @@ function resetRunToBoot() {
   playerInvulnerableUntil = 0;
 
   unlockedWeapons.clear();
+  unlockedWeapons.add('knife');
   unlockedWeapons.add('carbine');
   unlockedWeapons.add('pistol');
   Object.entries(WEAPON_PROFILES).forEach(([id, w]) => {
@@ -1632,6 +1793,7 @@ function updateRoundProgression(now) {
 }
 
 function showStoryDialogue(speaker, text, objective) {
+  // Small in-world HUD now carries only short radio echoes/objective context.
   storySpeakerEl.textContent = speaker;
   storyDialogueTextEl.textContent = text;
   if (objective) storyObjectiveTextEl.textContent = objective;
@@ -1645,14 +1807,68 @@ function setStoryMarker(position, visible = true) {
   storyMarker.visible = visible;
 }
 
-function spawnStoryContacts() {
+function renderStoryDialoguePage() {
+  const line = storyDialogueQueue[storyDialogueIndex];
+  if (!line) return;
+  storyScreenKickerEl.textContent = line.kicker || 'RADIO LINK // OPEN';
+  storyScreenSpeakerEl.textContent = line.speaker || 'MARA';
+  storyScreenTextEl.textContent = line.text || '';
+  storyDialogueProgressEl.textContent = `${storyDialogueIndex + 1} / ${storyDialogueQueue.length}`;
+}
+
+function showStoryDialogueSequence(lines, onComplete = null) {
+  if (!lines?.length) {
+    onComplete?.();
+    return;
+  }
+  triggerHeld = false;
+  rightMouseDown = false;
+  isAiming = false;
+  storyDialogueQueue = lines;
+  storyDialogueIndex = 0;
+  storyDialogueOnComplete = onComplete;
+  storyDialogueBlocking = true;
+  storyInputLocked = true;
+  controls.pointerSpeed = 0;
+  storyDialogueScreenEl.classList.add('visible');
+  document.body.classList.add('story-dialogue-open');
+  renderStoryDialoguePage();
+}
+
+function advanceStoryDialogue() {
+  if (!storyDialogueBlocking) return;
+  storyDialogueIndex += 1;
+  if (storyDialogueIndex < storyDialogueQueue.length) {
+    renderStoryDialoguePage();
+    playTone(420, 520, .045, .009, 'triangle');
+    return;
+  }
+  const done = storyDialogueOnComplete;
+  storyDialogueBlocking = false;
+  storyInputLocked = false;
+  storyDialogueQueue = [];
+  storyDialogueIndex = 0;
+  storyDialogueOnComplete = null;
+  storyDialogueScreenEl.classList.remove('visible');
+  document.body.classList.remove('story-dialogue-open');
+  controls.pointerSpeed = Number(sensitivitySetting?.value || .78);
+  done?.();
+}
+
+function spawnStoryContacts(types = ['rifleman', 'rifleman'], points = null) {
   enemies.forEach(deactivateEnemy);
   const available = enemies.filter(e => !e.activeInRound && !e.alive && !e.dying);
-  if (available[0]) configureEnemy(available[0], 'rifleman', [STORY_X - 5.5, -15.2]);
-  if (available[1]) configureEnemy(available[1], 'rifleman', [STORY_X + 5.0, -17.0]);
+  const defaults = [
+    [STORY_X - 5.5, -15.2], [STORY_X + 5.0, -17.0],
+    [STORY_X - 2.8, -18.7], [STORY_X + 8.2, -13.3]
+  ];
+  types.forEach((type, i) => {
+    if (available[i]) configureEnemy(available[i], type, (points || defaults)[i] || defaults[i % defaults.length]);
+  });
   storyKills = 0;
+  storyKillsRequired = types.length;
   roundState = 'active';
-  playerInvulnerableUntil = Math.max(playerInvulnerableUntil, performance.now() + 850);
+  playerInvulnerableUntil = Math.max(playerInvulnerableUntil, performance.now() + 950);
   updateRoundHud();
 }
 
@@ -1661,25 +1877,30 @@ function startStoryMode() {
   clearDynamicStructures();
   bossHudEl.classList.remove('visible');
   roundBannerEl.classList.remove('visible');
-  storyState = 'intro';
+  storyState = 'waking';
   storyStage = 0;
   storyKills = 0;
-  storyNextAt = performance.now() + 420;
+  storyKillsRequired = 0;
   storyCompletionAt = 0;
   roundState = 'story';
-  camera.position.set(STORY_X, STAND_EYE_HEIGHT, 20);
+  camera.position.copy(STORY_SPAWN);
   verticalOffset = 0;
   currentEyeHeight = STAND_EYE_HEIGHT;
   velocity.set(0, 0, 0);
   playerHealth = 100;
   stamina = 100;
-  playerInvulnerableUntil = performance.now() + 1800;
+  playerInvulnerableUntil = performance.now() + 4200;
   setStoryMarker(STORY_SIGNAL, false);
   storyHudEl.classList.add('visible');
-  showStoryDialogue('MARA // RADIO', '...signal trying to lock. Keep breathing. I need to know you can still move.', 'LISTEN');
+  storyObjectiveTextEl.textContent = 'WAKE UP';
+  storyWakeStartedAt = performance.now();
+  storyWakeOpening = false;
+  storyInputLocked = true;
+  controls.pointerSpeed = 0;
+  storyWakeOverlayEl.classList.remove('opening');
+  storyWakeOverlayEl.classList.add('visible');
   updateHealthHud();
   updateRoundHud();
-  showRoundBanner('STORY MODE // CHAPTER ZERO', 'THE MARGIN', 'A SHORT PROLOGUE PROTOTYPE', 2200);
 }
 
 function updateStoryMode(now, dt) {
@@ -1691,46 +1912,114 @@ function updateStoryMode(now, dt) {
     storyMarker.scale.set(pulse, 1, pulse);
   }
 
-  if (storyState === 'intro' && now >= storyNextAt) {
-    if (storyStage === 0) {
-      storyStage = 1;
-      storyNextAt = now + 3000;
-      showStoryDialogue('MARA // RADIO', 'You are in the Margin District. It was blank yesterday. Now it keeps drawing itself.', 'LISTEN');
-    } else {
-      storyState = 'reachSignal';
-      setStoryMarker(STORY_SIGNAL, true);
-      showStoryDialogue('MARA // RADIO', 'There is a signal mark down the street. Reach it. I will guide you from there.', 'REACH THE SIGNAL MARK');
+  if (storyState === 'waking') {
+    const elapsed = now - storyWakeStartedAt;
+    if (!storyWakeOpening && elapsed > 520) {
+      storyWakeOpening = true;
+      storyWakeOverlayEl.classList.add('opening');
+      playNoiseBurst(.012, .42, 1350);
     }
-  } else if (storyState === 'reachSignal') {
+    if (elapsed > 2850) {
+      storyState = 'introDialogue';
+      storyWakeOverlayEl.classList.remove('visible', 'opening');
+      showStoryDialogueSequence([
+        { kicker: 'CHAPTER ZERO // SIGNAL RECOVERED', speaker: 'MARA', text: 'There you are. Do not stand up too quickly. The district has been redrawing itself all night.' },
+        { speaker: 'YOU', text: 'Where am I?' },
+        { speaker: 'MARA', text: 'The Margin District. It used to be empty space between pages. Something has started filling it in.' },
+        { speaker: 'MARA', text: 'I marked a signal down the street. Reach it. And if anything drawn there starts moving, assume it is hostile.' }
+      ], () => {
+        storyState = 'reachSignal';
+        storyObjectiveTextEl.textContent = 'REACH THE SIGNAL MARK';
+        setStoryMarker(STORY_SIGNAL, true);
+        showStoryDialogue('MARA // RADIO', 'Signal mark is ahead.', 'REACH THE SIGNAL MARK');
+      });
+    }
+    return;
+  }
+
+  if (storyDialogueBlocking) return;
+
+  if (storyState === 'reachSignal') {
     const dist = Math.hypot(camera.position.x - STORY_SIGNAL.x, camera.position.z - STORY_SIGNAL.z);
     if (dist < 2.25) {
       setStoryMarker(STORY_SIGNAL, false);
-      storyState = 'combat';
-      showStoryDialogue('MARA // RADIO', 'Stop. Two figures ahead. Those are not drawings anymore. Cross them out before they reach you.', 'ERASE THE TWO CONTACTS');
-      spawnStoryContacts();
-      playRoundStinger('round');
+      storyState = 'signalDialogue';
+      showStoryDialogueSequence([
+        { kicker: 'SIGNAL MARK // ACTIVE', speaker: 'MARA', text: 'Stop. Two figures ahead.' },
+        { speaker: 'MARA', text: 'They look human from here, but the ink is wrong. They are copies. Cross them out before they close the street.' }
+      ], () => {
+        storyState = 'combatOne';
+        showStoryDialogue('MARA // RADIO', 'Two contacts. Keep moving.', 'ERASE THE TWO CONTACTS');
+        spawnStoryContacts(['rifleman', 'rifleman']);
+        playRoundStinger('round');
+      });
     }
-  } else if (storyState === 'combat') {
-    if (storyKills >= 2 && activeEnemyCount() === 0) {
+  } else if (storyState === 'combatOne') {
+    if (storyKills >= storyKillsRequired && activeEnemyCount() === 0) {
+      storyState = 'relay';
+      roundState = 'story';
+      setStoryMarker(STORY_RELAY, true);
+      playerHealth = Math.min(100, playerHealth + 25);
+      updateHealthHud();
+      showStoryDialogueSequence([
+        { kicker: 'CONTACTS // ERASED', speaker: 'MARA', text: 'Good. They broke apart when you hit them. Like the page could not decide what shape they were supposed to keep.' },
+        { speaker: 'MARA', text: 'There is an old relay on your right. I need you to wake it up. It might tell us who is drawing these things.' }
+      ], () => {
+        storyObjectiveTextEl.textContent = 'REACH THE RELAY';
+      });
+    }
+  } else if (storyState === 'relay') {
+    const dist = Math.hypot(camera.position.x - STORY_RELAY.x, camera.position.z - STORY_RELAY.z);
+    if (dist < 2.1) {
+      setStoryMarker(STORY_RELAY, false);
+      storyState = 'relayDialogue';
+      showStoryDialogueSequence([
+        { kicker: 'RELAY // PARTIAL SIGNAL', speaker: 'MARA', text: 'I have it. There is another signal underneath mine.' },
+        { speaker: 'UNKNOWN', text: '...return the borrowed line...' },
+        { speaker: 'YOU', text: 'Mara. That was not you.' },
+        { speaker: 'MARA', text: 'No. And you have company. Three contacts. One of them is moving fast.' }
+      ], () => {
+        storyState = 'combatTwo';
+        showStoryDialogue('MARA // RADIO', 'Second wave incoming.', 'SURVIVE THE AMBUSH');
+        spawnStoryContacts(['rusher', 'rifleman', 'rifleman'], [
+          [STORY_X + 1.0, -17.5], [STORY_X - 7.5, -15.0], [STORY_X + 8.0, -18.5]
+        ]);
+        playRoundStinger('round');
+      });
+    }
+  } else if (storyState === 'combatTwo') {
+    if (storyKills >= storyKillsRequired && activeEnemyCount() === 0) {
       storyState = 'extract';
       roundState = 'story';
       setStoryMarker(STORY_EXTRACTION, true);
-      playerHealth = Math.min(100, playerHealth + 35);
+      playerHealth = Math.min(100, playerHealth + 30);
       updateHealthHud();
-      showStoryDialogue('MARA // RADIO', 'Good. The ink reacted to you. That should be impossible. Reach the exit mark before the page changes its mind.', 'REACH THE EXTRACTION MARK');
-      showRoundBanner('CHAPTER ZERO', 'CONTACTS ERASED', 'MOVE TO THE EXIT MARK', 1800);
+      showStoryDialogueSequence([
+        { kicker: 'RELAY // FAILING', speaker: 'MARA', text: 'The relay is burning itself out. I copied what I could.' },
+        { speaker: 'MARA', text: 'Get to the exit mark. Now. The street geometry is changing behind you.' }
+      ], () => {
+        storyObjectiveTextEl.textContent = 'REACH EXTRACTION';
+      });
     }
   } else if (storyState === 'extract') {
     const dist = Math.hypot(camera.position.x - STORY_EXTRACTION.x, camera.position.z - STORY_EXTRACTION.z);
     if (dist < 2.35) {
       setStoryMarker(STORY_EXTRACTION, false);
-      storyState = 'complete';
+      storyState = 'endingDialogue';
       roundState = 'story';
-      storyCompletionAt = now + 5200;
-      showStoryDialogue('MARA // RADIO', 'You made it. Do not celebrate. This was only the margin. Something on the next page knows you are here.', 'CHAPTER ZERO COMPLETE');
-      showRoundBanner('STORY MODE', 'CHAPTER ZERO COMPLETE', 'THE MARGIN // PROLOGUE END', 4200);
       playRoundStinger('complete');
-      updateRoundHud();
+      showStoryDialogueSequence([
+        { kicker: 'CHAPTER ZERO // EXIT MARK', speaker: 'YOU', text: 'Tell me you know what that voice was.' },
+        { speaker: 'MARA', text: 'I know what it called you.' },
+        { speaker: 'MARA', text: 'Borrowed line.' },
+        { kicker: 'CHAPTER ZERO // COMPLETE', speaker: 'MARA', text: 'This was only the margin. Whatever is on the next page already knows you are here.' }
+      ], () => {
+        storyState = 'complete';
+        storyCompletionAt = performance.now() + 2200;
+        storyObjectiveTextEl.textContent = 'CHAPTER ZERO COMPLETE';
+        showRoundBanner('STORY MODE', 'CHAPTER ZERO COMPLETE', 'THE MARGIN // PROLOGUE END', 2200);
+        updateRoundHud();
+      });
     }
   } else if (storyState === 'complete' && storyCompletionAt && now >= storyCompletionAt) {
     storyCompletionAt = 0;
@@ -1743,7 +2032,7 @@ function updateStoryMode(now, dt) {
 }
 
 function combatIsActive() {
-  return controls.isLocked && ((gameMode === 'arena' && roundState === 'active') || (gameMode === 'story' && storyState === 'combat'));
+  return controls.isLocked && ((gameMode === 'arena' && roundState === 'active') || (gameMode === 'story' && (storyState === 'combatOne' || storyState === 'combatTwo')));
 }
 
 function updateEnemies(now, dt) {
@@ -1757,7 +2046,7 @@ function updateEnemies(now, dt) {
       enemy.visual.scale.set(base[0] * (1 + t * .08), Math.max(.04, base[1] * (1 - t * .92)), base[2] * (1 + t * .05));
 
       enemy.parts.forEach((part, i) => {
-        const disappearAt = .28 + (i / Math.max(1, enemy.parts.length - 1)) * .42;
+        const disappearAt = .10 + (i / Math.max(1, enemy.parts.length - 1)) * .24;
         if (t > disappearAt) part.visible = false;
       });
 
@@ -2021,6 +2310,12 @@ let nextFootstepAt = 0;
 
 // ---------- Weapons, ammo progression, reload, and player combat state ----------
 const WEAPON_PROFILES = {
+  knife: {
+    slot: 0, name: 'INK KNIFE', short: 'KNIFE', unlockRound: 1, melee: true,
+    magSize: 0, reserveMax: 0, startReserve: 0, fireInterval: .46, reloadTime: 0,
+    bodyDamage: 76, headDamage: 118, pellets: 1, spread: 0, meleeRange: 2.15,
+    recoil: .28, pitch: .018, muzzleZ: -.72, visualScale: [1, 1, 1], viewOffset: [.12, -.08, .10], handPos: [-.08, -.20, -.38], adsPos: [.10, -.36, -.60], adsFov: 64
+  },
   carbine: {
     slot: 1, name: 'SKETCH CARBINE', short: 'CARBINE', unlockRound: 1,
     magSize: 12, reserveMax: 84, startReserve: 48, fireInterval: .11, reloadTime: 1.85,
@@ -2031,31 +2326,36 @@ const WEAPON_PROFILES = {
     slot: 2, name: 'PENCIL PISTOL', short: 'PISTOL', unlockRound: 1,
     magSize: 9, reserveMax: 63, startReserve: 36, fireInterval: .24, reloadTime: 1.45,
     bodyDamage: 46, headDamage: 105, pellets: 1, spread: .0015,
-    recoil: .48, pitch: .042, muzzleZ: -.92, visualScale: [.78, .86, .64], viewOffset: [.08, -.025, .08], handPos: [-.08, -.16, -.42], adsPos: [.12, -.42, -.68], adsFov: 56
+    recoil: .48, pitch: .042, muzzleZ: -.72, visualScale: [1, 1, 1], viewOffset: [.13, -.02, .13], handPos: [-.04, -.20, -.24], adsPos: [.10, -.39, -.62], adsFov: 56,
+    magScale: [.58, .72, .58], magPos: [0, -.22, .10]
   },
   shotgun: {
     slot: 3, name: 'CROSS-OUT SHOTGUN', short: 'SHOTGUN', unlockRound: 2,
     magSize: 6, reserveMax: 36, startReserve: 24, fireInterval: .58, reloadTime: 2.05,
     bodyDamage: 14, headDamage: 21, pellets: 8, spread: .030,
-    recoil: 1.05, pitch: .070, muzzleZ: -1.58, visualScale: [1.06, 1.02, 1.27], viewOffset: [.01, -.015, .01], handPos: [-.13, -.17, -.73], adsPos: [.18, -.52, -.95], adsFov: 60
+    recoil: 1.05, pitch: .070, muzzleZ: -1.58, visualScale: [1, 1, 1], viewOffset: [.01, -.015, .01], handPos: [-.13, -.17, -.76], adsPos: [.18, -.52, -.98], adsFov: 60,
+    magScale: [.78,.82,.74], magPos: [0,-.25,-.02]
   },
   smg: {
     slot: 4, name: 'SCRIBBLE SMG', short: 'SMG', unlockRound: 3,
     magSize: 24, reserveMax: 144, startReserve: 72, fireInterval: .072, reloadTime: 1.62,
     bodyDamage: 22, headDamage: 47, pellets: 1, spread: .005,
-    recoil: .38, pitch: .020, muzzleZ: -1.08, visualScale: [.91, .94, .80], viewOffset: [.055, -.018, .055], handPos: [-.11, -.16, -.49], adsPos: [.15, -.47, -.76], adsFov: 57
+    recoil: .38, pitch: .020, muzzleZ: -.98, visualScale: [1, 1, 1], viewOffset: [.075, -.025, .075], handPos: [-.10, -.18, -.48], adsPos: [.13, -.47, -.72], adsFov: 57,
+    magScale: [.72,1.06,.72], magPos: [0,-.26,-.12]
   },
   rifle: {
     slot: 5, name: 'RULER RIFLE', short: 'RULER', unlockRound: 4,
     magSize: 5, reserveMax: 35, startReserve: 20, fireInterval: .52, reloadTime: 2.15,
     bodyDamage: 76, headDamage: 180, pellets: 1, spread: 0,
-    recoil: .92, pitch: .065, muzzleZ: -1.72, visualScale: [.90, .96, 1.45], viewOffset: [0, 0, .045], handPos: [-.14, -.17, -.79], adsPos: [0, -.22, -.70], adsFov: 29, scoped: true
+    recoil: .92, pitch: .065, muzzleZ: -1.72, visualScale: [1, 1, 1], viewOffset: [0, 0, .045], handPos: [-.14, -.17, -.79], adsPos: [0, -.22, -.70], adsFov: 29, scoped: true,
+    magScale: [.76,.84,.76], magPos: [0,-.25,-.08]
   },
   marker: {
     slot: 6, name: 'MARKER HEAVY', short: 'MARKER', unlockRound: 5,
     magSize: 8, reserveMax: 48, startReserve: 28, fireInterval: .34, reloadTime: 2.35,
     bodyDamage: 58, headDamage: 112, pellets: 1, spread: .004,
-    recoil: 1.12, pitch: .075, muzzleZ: -1.46, visualScale: [1.26, 1.18, 1.12], viewOffset: [0, -.035, .035], handPos: [-.16, -.20, -.64], adsPos: [.20, -.60, -.98], adsFov: 61
+    recoil: 1.12, pitch: .075, muzzleZ: -1.46, visualScale: [1, 1, 1], viewOffset: [0, -.035, .035], handPos: [-.16, -.20, -.64], adsPos: [.20, -.60, -.98], adsFov: 61,
+    magScale: [1.05,1.08,1.0], magPos: [0,-.25,-.08]
   }
 };
 
@@ -2064,7 +2364,7 @@ Object.entries(WEAPON_PROFILES).forEach(([id, w]) => {
   weaponStates[id] = { ammo: w.magSize, reserve: w.startReserve };
 });
 
-const unlockedWeapons = new Set(['carbine', 'pistol']);
+const unlockedWeapons = new Set(['knife', 'carbine', 'pistol']);
 let currentWeaponId = 'carbine';
 let ammoCurrent = weaponStates.carbine.ammo;
 let ammoReserve = weaponStates.carbine.reserve;
@@ -2089,24 +2389,60 @@ function clearWeaponVariantVisual() {
 
 function buildWeaponVariantVisual(id) {
   clearWeaponVariantVisual();
-  if (id === 'pistol') {
-    boxPart(weaponVariantGroup, .16, .06, .18, 0, .15, -.28, 0, 0, 0, gunShade);
-    boxPart(weaponVariantGroup, .24, .07, .08, 0, .06, -.70, 0, 0, 0, gunPaper);
+
+  if (id === 'knife') {
+    // A chunky notebook-combat knife: blocky handle, guard and a tapered-looking blade.
+    boxPart(weaponVariantGroup, .16, .18, .42, .05, -.12, -.18, -.08, 0, -.08, gunShade);
+    boxPart(weaponVariantGroup, .34, .055, .12, .03, -.02, -.38, 0, 0, -.03, gunPaper);
+    boxPart(weaponVariantGroup, .105, .045, .58, .03, .015, -.67, 0, 0, .02, gunPaper);
+    boxPart(weaponVariantGroup, .035, .052, .26, .075, .012, -1.03, 0, .05, .02, gunPaper);
+    const knifeHandMat = handPaper.clone();
+    boxPart(weaponVariantGroup, .22, .22, .22, .09, -.24, .00, -.10, 0, -.10, knifeHandMat);
+    boxPart(weaponVariantGroup, .18, .18, .52, .17, -.37, .30, .08, -.04, -.08, knifeHandMat);
+    // Ink groove down the blade.
+    const groove = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(.02,.045,-.45), new THREE.Vector3(.02,.045,-.96)
+    ]);
+    weaponVariantGroup.add(new THREE.Line(groove, new THREE.LineBasicMaterial({ color: INK_DARK, transparent: true, opacity: .55 })));
+  } else if (id === 'pistol') {
+    // Entire pistol silhouette, not a shrunken rifle.
+    boxPart(weaponVariantGroup, .29, .15, .62, 0, .04, -.28, 0, 0, 0, gunPaper);      // slide
+    boxPart(weaponVariantGroup, .25, .11, .46, 0, -.085, -.22, 0, 0, 0, gunShade);    // frame
+    boxPart(weaponVariantGroup, .19, .39, .20, .015, -.32, -.02, -.24, 0, 0, gunShade); // grip
+    boxPart(weaponVariantGroup, .16, .025, .18, 0, -.205, -.27, 0, 0, 0, gunPaper);   // trigger guard base
+    cylinderPart(weaponVariantGroup, .027, .22, 0, .04, -.69, Math.PI/2, 0, 0, gunShade);
+    boxPart(weaponVariantGroup, .065, .065, .04, 0, .145, -.48, 0, 0, 0, gunShade);   // front sight
+    boxPart(weaponVariantGroup, .11, .055, .04, 0, .145, -.04, 0, 0, 0, gunShade);   // rear sight
   } else if (id === 'shotgun') {
-    boxPart(weaponVariantGroup, .33, .15, .42, 0, -.07, -.76, 0, 0, 0, gunShade);
-    cylinderPart(weaponVariantGroup, .038, .72, 0, -.10, -.91, Math.PI / 2, 0, 0, gunPaper);
-    boxPart(weaponVariantGroup, .37, .035, .36, 0, -.17, -.69, 0, 0, 0, gunPaper);
+    boxPart(weaponVariantGroup, .34, .20, .56, 0, -.02, -.10, 0, 0, 0, gunShade);     // receiver
+    boxPart(weaponVariantGroup, .28, .18, .55, 0, -.02, .43, 0, 0, 0, gunPaper);      // stock
+    cylinderPart(weaponVariantGroup, .037, 1.05, 0, .035, -.90, Math.PI/2, 0, 0, gunPaper); // barrel
+    cylinderPart(weaponVariantGroup, .032, .92, 0, -.075, -.85, Math.PI/2, 0, 0, gunShade); // tube
+    boxPart(weaponVariantGroup, .38, .15, .46, 0, -.12, -.64, 0, 0, 0, gunPaper);     // pump
+    boxPart(weaponVariantGroup, .16, .34, .15, .03, -.32, .08, -.25, 0, 0, gunShade);
   } else if (id === 'smg') {
-    boxPart(weaponVariantGroup, .15, .31, .14, -.04, -.25, -.52, -.12, 0, 0, gunShade);
-    boxPart(weaponVariantGroup, .34, .09, .18, 0, .08, -.67, 0, 0, 0, gunPaper);
+    boxPart(weaponVariantGroup, .38, .24, .58, 0, -.01, -.16, 0, 0, 0, gunShade);     // compact receiver
+    boxPart(weaponVariantGroup, .31, .18, .30, 0, .00, -.56, 0, 0, 0, gunPaper);      // short front
+    cylinderPart(weaponVariantGroup, .032, .26, 0, .01, -.81, Math.PI/2, 0, 0, gunShade);
+    boxPart(weaponVariantGroup, .14, .38, .15, -.02, -.35, -.24, -.10, 0, 0, gunShade); // straight mag
+    boxPart(weaponVariantGroup, .14, .30, .13, .00, -.30, -.55, -.04, 0, 0, gunPaper); // foregrip
+    boxPart(weaponVariantGroup, .27, .12, .28, 0, .00, .35, 0, 0, 0, gunPaper);       // compact stock
   } else if (id === 'rifle') {
-    boxPart(weaponVariantGroup, .035, .035, 1.18, .18, .08, -.48, 0, 0, 0, gunShade);
-    boxPart(weaponVariantGroup, .20, .14, .26, 0, .23, -.12, 0, 0, 0, gunPaper);
-    boxPart(weaponVariantGroup, .06, .11, .07, 0, .31, -.12, 0, 0, 0, gunShade);
+    boxPart(weaponVariantGroup, .31, .18, .75, 0, -.01, -.22, 0, 0, 0, gunShade);
+    boxPart(weaponVariantGroup, .25, .14, .70, 0, .00, -.86, 0, 0, 0, gunPaper);
+    cylinderPart(weaponVariantGroup, .027, .82, 0, .01, -1.55, Math.PI/2, 0, 0, gunShade);
+    boxPart(weaponVariantGroup, .26, .18, .52, 0, -.01, .44, 0, 0, 0, gunPaper);
+    boxPart(weaponVariantGroup, .035, .035, 1.28, .18, .08, -.55, 0, 0, 0, gunShade);  // ruler rail
+    cylinderPart(weaponVariantGroup, .095, .38, 0, .23, -.29, Math.PI/2, 0, 0, gunPaper); // scope tube
+    cylinderPart(weaponVariantGroup, .12, .055, 0, .23, -.50, Math.PI/2, 0, 0, gunShade);
+    boxPart(weaponVariantGroup, .16, .34, .15, .03, -.33, .12, -.24, 0, 0, gunShade);
   } else if (id === 'marker') {
-    cylinderPart(weaponVariantGroup, .082, .70, 0, .02, -.88, Math.PI / 2, 0, 0, gunPaper);
-    cylinderPart(weaponVariantGroup, .105, .18, 0, .02, -1.31, Math.PI / 2, 0, 0, gunShade);
-    boxPart(weaponVariantGroup, .40, .16, .22, 0, -.03, -.36, 0, 0, 0, gunShade);
+    cylinderPart(weaponVariantGroup, .15, .86, 0, .00, -.55, Math.PI / 2, 0, 0, gunPaper); // huge marker body
+    cylinderPart(weaponVariantGroup, .10, .55, 0, .00, -1.22, Math.PI / 2, 0, 0, gunShade);
+    cylinderPart(weaponVariantGroup, .14, .18, 0, .00, -1.56, Math.PI / 2, 0, 0, gunPaper);
+    boxPart(weaponVariantGroup, .43, .25, .38, 0, -.04, .02, 0, 0, 0, gunShade);
+    boxPart(weaponVariantGroup, .21, .38, .18, .03, -.36, .12, -.23, 0, 0, gunShade);
+    cylinderPart(weaponVariantGroup, .18, .22, 0, -.25, -.13, Math.PI/2, 0, 0, gunPaper); // drum-ish mag
   }
 }
 
@@ -2129,15 +2465,30 @@ function updateWeaponRack() {
 
 function applyWeaponVisualProfile() {
   const w = currentWeapon();
-  gunBody.scale.set(...w.visualScale);
-  chargingHandle.scale.set(...w.visualScale);
-  seatedMagazine.scale.set(Math.min(1.18, w.visualScale[0]), Math.min(1.18, w.visualScale[1]), Math.min(1.12, w.visualScale[2]));
+  const isCarbine = currentWeaponId === 'carbine';
+  const isKnife = !!w.melee;
+
+  gunBody.visible = isCarbine;
+  chargingHandle.visible = !isKnife && currentWeaponId !== 'pistol' && currentWeaponId !== 'shotgun' && currentWeaponId !== 'marker';
+  rightHand.visible = !isKnife;
+  leftHand.visible = !isKnife && currentWeaponId !== 'pistol';
+
+  const magScale = w.magScale || [1,1,1];
+  const magPos = w.magPos || [MAG_SEATED_POS.x, MAG_SEATED_POS.y, MAG_SEATED_POS.z];
+  seatedMagazine.scale.set(...magScale);
   spareMagazine.scale.copy(seatedMagazine.scale);
+  seatedMagazine.position.set(...magPos);
+  seatedMagazine.visible = !isKnife;
+  spareMagazine.visible = false;
+
   activeWeaponBasePos.copy(WEAPON_BASE_POS).add(new THREE.Vector3(...w.viewOffset));
   activeWeaponBaseRot.copy(WEAPON_BASE_ROT);
   activeLeftHandBase.set(...w.handPos);
   leftHand.position.copy(activeLeftHandBase);
+  rightHand.position.set(0,0,0);
+  if (currentWeaponId === 'pistol') rightHand.position.set(.02,-.02,.02);
   muzzleFlash.position.z = w.muzzleZ;
+  muzzleFlash.visible = false;
   buildWeaponVariantVisual(currentWeaponId);
   weaponRig.position.copy(activeWeaponBasePos);
   weaponRig.rotation.copy(activeWeaponBaseRot);
@@ -2146,11 +2497,17 @@ function applyWeaponVisualProfile() {
 
 function updateAmmoHud() {
   const w = currentWeapon();
-  ammoCurrentEl.textContent = String(ammoCurrent).padStart(2, '0');
-  ammoReserveEl.textContent = String(ammoReserve).padStart(2, '0');
   ammoLabelEl.textContent = w.name;
   weaponNameEl.textContent = w.name;
-  reloadNote.textContent = isReloading ? 'MAG SWAP...' : (ammoCurrent ? `SLOT ${w.slot} // READY` : 'EMPTY · TAP RMB');
+  if (w.melee) {
+    ammoCurrentEl.textContent = '∞';
+    ammoReserveEl.textContent = '—';
+    reloadNote.textContent = 'MELEE // READY';
+  } else {
+    ammoCurrentEl.textContent = String(ammoCurrent).padStart(2, '0');
+    ammoReserveEl.textContent = String(ammoReserve).padStart(2, '0');
+    reloadNote.textContent = isReloading ? 'MAG SWAP...' : (ammoCurrent ? `SLOT ${w.slot} // READY` : 'EMPTY · TAP RMB');
+  }
   reloadNote.classList.toggle('reloading', isReloading);
 }
 
@@ -2190,6 +2547,7 @@ function switchWeaponBySlot(slot) {
 
 function addAmmoToCurrentWeapon(amount) {
   const w = currentWeapon();
+  if (w.melee) return false;
   if (ammoReserve >= w.reserveMax) return false;
   ammoReserve = Math.min(w.reserveMax, ammoReserve + amount);
   syncCurrentWeaponAmmo();
@@ -2201,6 +2559,7 @@ function refillUnlockedWeaponAmmo(fraction = .25) {
   syncCurrentWeaponAmmo();
   unlockedWeapons.forEach(id => {
     const w = WEAPON_PROFILES[id];
+    if (w.melee) return;
     const state = weaponStates[id];
     state.reserve = Math.min(w.reserveMax, state.reserve + Math.max(w.magSize, Math.round(w.reserveMax * fraction)));
   });
@@ -2216,6 +2575,7 @@ function updateHealthHud() {
 
 function startReload() {
   const w = currentWeapon();
+  if (w.melee) return;
   if (!controls.isLocked || isReloading || ammoCurrent === w.magSize || ammoReserve <= 0 || playerHealth <= 0) return;
   isReloading = true;
   weaponRig.visible = true;
@@ -2226,7 +2586,7 @@ function startReload() {
   reloadAmmoCommitted = false;
   triggerHeld = false;
   seatedMagazine.visible = true;
-  seatedMagazine.position.copy(MAG_SEATED_POS);
+  seatedMagazine.position.copy(getCurrentMagSeat());
   seatedMagazine.rotation.set(0, 0, 0);
   spareMagazine.visible = false;
   chargingHandle.position.z = CHARGE_BASE_Z;
@@ -2253,7 +2613,7 @@ function finishReload() {
   weaponRig.visible = true;
   spareMagazine.visible = false;
   seatedMagazine.visible = true;
-  seatedMagazine.position.copy(MAG_SEATED_POS);
+  seatedMagazine.position.copy(getCurrentMagSeat());
   seatedMagazine.rotation.set(0, 0, 0);
   leftHand.position.copy(activeLeftHandBase);
   leftHand.rotation.set(0, 0, 0);
@@ -2268,8 +2628,8 @@ function cancelReload() {
   weaponRig.visible = true;
   reloadAmmoCommitted = false;
   spareMagazine.visible = false;
-  seatedMagazine.visible = true;
-  seatedMagazine.position.copy(MAG_SEATED_POS);
+  seatedMagazine.visible = !currentWeapon().melee;
+  seatedMagazine.position.copy(getCurrentMagSeat());
   seatedMagazine.rotation.set(0, 0, 0);
   leftHand.position.copy(activeLeftHandBase);
   leftHand.rotation.set(0, 0, 0);
@@ -2320,7 +2680,7 @@ function updateReloadAnimation(now) {
   } else if (t < .36) {
     const p = segment01(t, .20, .36);
     lerpVec(MAG_GRAB_POS, OLD_MAG_LOW_POS, p, leftHand.position);
-    lerpVec(MAG_SEATED_POS, MAG_DROP_POS, p, seatedMagazine.position);
+    lerpVec(getCurrentMagSeat(), MAG_DROP_POS, p, seatedMagazine.position);
     seatedMagazine.rotation.z = .22 * p;
     seatedMagazine.rotation.x = -.10 * p;
   } else if (t < .46) {
@@ -2332,7 +2692,7 @@ function updateReloadAnimation(now) {
   } else if (t < .66) {
     const p = segment01(t, .46, .66);
     spareMagazine.visible = true;
-    lerpVec(SPARE_START_POS, MAG_SEATED_POS, p, spareMagazine.position);
+    lerpVec(SPARE_START_POS, getCurrentMagSeat(), p, spareMagazine.position);
     spareMagazine.rotation.set(-.13 * (1-p), .06 * (1-p), .18 * (1-p));
     reloadVec.copy(spareMagazine.position).add(new THREE.Vector3(-.01, -.07, .02));
     leftHand.position.copy(reloadVec);
@@ -2342,7 +2702,7 @@ function updateReloadAnimation(now) {
       commitReloadAmmo();
       spareMagazine.visible = false;
       seatedMagazine.visible = true;
-      seatedMagazine.position.copy(MAG_SEATED_POS);
+      seatedMagazine.position.copy(getCurrentMagSeat());
       seatedMagazine.rotation.set(0, 0, 0);
     }
     const p = segment01(t, .66, .72);
@@ -2435,7 +2795,7 @@ function damagePlayer(amount) {
 
 function respawnPlayer() {
   if (gameMode === 'story') {
-    const checkpointZ = (storyState === 'combat' || storyState === 'extract' || storyState === 'complete') ? -1 : 20;
+    const checkpointZ = (storyState === 'combatOne' || storyState === 'relay' || storyState === 'relayDialogue' || storyState === 'combatTwo' || storyState === 'extract' || storyState === 'endingDialogue' || storyState === 'complete') ? -6 : 20;
     camera.position.set(STORY_X, EYE_HEIGHT, checkpointZ);
   } else {
     camera.position.set(0, EYE_HEIGHT, 16);
@@ -2452,9 +2812,11 @@ function respawnPlayer() {
   playerHealth = 100;
   playerInvulnerableUntil = performance.now() + 2200;
   const w = currentWeapon();
-  ammoCurrent = w.magSize;
-  ammoReserve = Math.max(ammoReserve, w.magSize * 2);
-  syncCurrentWeaponAmmo();
+  if (!w.melee) {
+    ammoCurrent = w.magSize;
+    ammoReserve = Math.max(ammoReserve, w.magSize * 2);
+    syncCurrentWeaponAmmo();
+  }
   cancelReload();
   updateHealthHud();
   updateAmmoHud();
@@ -2785,7 +3147,7 @@ function updateMovement(dt) {
 
 
 function updateAimState(now) {
-  const canAim = controls.isLocked && playerHealth > 0 && !isReloading && !sliding && dashTimer <= 0 && roundState !== 'boot';
+  const canAim = controls.isLocked && playerHealth > 0 && !isReloading && !sliding && dashTimer <= 0 && roundState !== 'boot' && !currentWeapon().melee && !storyInputLocked;
   if (rightMouseDown && canAim && now - rightMouseDownAt >= AIM_HOLD_MS) {
     if (!isAiming) {
       isAiming = true;
@@ -2807,7 +3169,7 @@ const hitDots = [];
 let triggerHeld = false;
 
 window.addEventListener('mousedown', (e) => {
-  if (!controls.isLocked) return;
+  if (!controls.isLocked || storyInputLocked) return;
 
   if (e.button === 0) {
     triggerHeld = true;
@@ -2840,10 +3202,43 @@ window.addEventListener('contextmenu', (e) => {
   if (controls.isLocked) e.preventDefault();
 });
 
+function performKnifeAttack(now, w) {
+  lastShotAt = now;
+  playGunSound('knife');
+  recoilKick = Math.min(1.1, recoilKick + .38);
+  recoilPitch -= .045;
+  recoilYaw += (Math.random() < .5 ? -1 : 1) * .42;
+  recoilRoll += .58;
+
+  const liveEnemyMeshes = enemyHitMeshes.filter(mesh => {
+    const enemy = mesh.userData.enemy;
+    return enemy && enemy.alive && !enemy.dying && enemy.activeInRound && mesh.visible && enemy.group.visible;
+  });
+  raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+  const hits = raycaster.intersectObjects(liveEnemyMeshes, false)
+    .filter(hit => hit.object.visible && hit.distance <= w.meleeRange);
+
+  if (!hits.length) {
+    showCombatMessage('KNIFE // AIR', 220);
+    return;
+  }
+
+  const hit = hits[0];
+  const enemy = hit.object.userData.enemy;
+  const part = hit.object.userData.hitPart || 'body';
+  const damage = part === 'head' ? w.headDamage : w.bodyDamage;
+  damageEnemy(enemy, damage, part, hit.point, raycaster.ray.direction);
+  spawnInkBurst(hit.point, part === 'head' ? 12 : 8, .42);
+}
+
 function fireTestShot() {
   const now = performance.now();
   const w = currentWeapon();
-  if (isReloading || playerHealth <= 0 || roundState === 'boot' || now - lastShotAt < w.fireInterval * 1000) return;
+  if (isReloading || playerHealth <= 0 || roundState === 'boot' || storyInputLocked || now - lastShotAt < w.fireInterval * 1000) return;
+  if (w.melee) {
+    performKnifeAttack(now, w);
+    return;
+  }
   if (ammoCurrent <= 0) {
     lastShotAt = now;
     recoilRoll += 0.012;
@@ -2959,6 +3354,7 @@ function animate(now) {
   updateDynamicStructures(now);
   if (controls.isLocked && triggerHeld) fireTestShot();
   updateEnemies(now, dt);
+  updateDeathChunks(now, dt);
   updateDeathScribbles(now, dt);
   updateInkParticles(dt);
   updatePickups(now);

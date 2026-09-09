@@ -96,6 +96,7 @@
     </div>
 
     <div id="weapon-rack" aria-label="weapon slots">
+      <div class="weapon-slot" data-weapon="knife"><b>0</b><span>KNIFE</span></div>
       <div class="weapon-slot" data-weapon="carbine"><b>1</b><span>CARBINE</span></div>
       <div class="weapon-slot" data-weapon="pistol"><b>2</b><span>PISTOL</span></div>
       <div class="weapon-slot locked" data-weapon="shotgun"><b>3</b><span>SHOTGUN</span></div>
@@ -107,8 +108,31 @@
     <div id="bottom-right">
       <div id="movement-note" aria-live="polite"></div>
       <div class="coords" id="coords">X 0.0 // Z 0.0</div>
-      <div class="controls-mini">1-6 WEAPONS · WASD MOVE · SHIFT SPRINT · CTRL/C SLIDE · Q DASH · SPACE JUMP · HOLD LMB FIRE · TAP RMB RELOAD · HOLD RMB AIM</div>
+      <div class="controls-mini">0-6 WEAPONS · WASD MOVE · SHIFT SPRINT · CTRL/C SLIDE · Q DASH · SPACE JUMP · HOLD LMB FIRE · TAP RMB RELOAD · HOLD RMB AIM</div>
     </div>
+  </div>
+
+  <div id="story-wake-overlay" aria-hidden="true">
+    <div class="wake-lid wake-lid-top"></div>
+    <div class="wake-lid wake-lid-bottom"></div>
+    <div class="wake-haze"></div>
+    <div class="wake-note">
+      <span>CHAPTER ZERO</span>
+      <b>MARGIN DISTRICT</b>
+      <small>SIGNAL RECOVERING...</small>
+    </div>
+  </div>
+
+  <div id="story-dialogue-screen" aria-live="polite">
+    <section class="story-dialogue-sheet">
+      <div class="tape tape-a"></div>
+      <div class="tape tape-b"></div>
+      <p class="eyebrow" id="story-screen-kicker">RADIO LINK // OPEN</p>
+      <h2 id="story-screen-speaker">MARA</h2>
+      <p id="story-screen-text">If you can hear me, keep moving.</p>
+      <div class="story-dialogue-progress" id="story-dialogue-progress">1 / 1</div>
+      <div class="story-dialogue-continue">SPACE / ENTER // CONTINUE</div>
+    </section>
   </div>
 
   <div id="menu" class="visible" data-mode="main">
@@ -140,7 +164,7 @@
           <div><b>W A S D</b><span>move</span></div>
           <div><b>LMB</b><span>hold to fire</span></div>
           <div><b>RMB</b><span>tap reload · hold aim</span></div>
-          <div><b>1 - 6</b><span>switch weapons</span></div>
+          <div><b>0 - 6</b><span>switch weapons</span></div>
           <div><b>SHIFT</b><span>sprint</span></div>
           <div><b>CTRL / C</b><span>crouch · sprint to slide</span></div>
           <div><b>Q</b><span>directional dash</span></div>

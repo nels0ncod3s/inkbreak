@@ -1,8 +1,8 @@
-# SKETCH//FIRE — Arena + Story Prototype
+# SKETCH//FIRE — Main Browser Build
 
-A browser-based 3D FPS made with HTML, CSS, JavaScript and Three.js. The world, weapons, enemies and effects are presented like blue ballpoint drawings on off-white notebook paper.
+A browser-based 3D FPS made with HTML, CSS, JavaScript and Three.js. Everything is styled like blue ballpoint ink on off-white notebook paper.
 
-## Run
+## Run locally
 
 Serve the folder over HTTP:
 
@@ -12,131 +12,100 @@ python -m http.server 8000
 
 Then open `http://localhost:8000`.
 
-## Main menu
+The same folder can be deployed as a static site to Vercel.
 
-The main menu now has two playable modes:
+## Modes
 
-- **Arena Mode** — the existing five-round Living Page progression in Sketchyard XL.
-- **Story Mode // Prologue** — a short Chapter Zero prototype on a separate map, **The Margin District**, with radio dialogue, navigation objectives, a small combat encounter and extraction.
-- **Controls** — complete input reference.
-- **Settings** — mouse sensitivity, base FOV and master volume.
+### Arena Mode
+Five escalating rounds in **Sketchyard XL**, with weapon unlocks, enemy classes, dynamic arena redraws and a Round 5 fight against **The Artist**.
 
-`Esc` during either mode opens the pause menu. Restarting preserves the currently selected mode; Main Menu returns to mode selection.
+### Story Mode // Chapter Zero
+A separate map, **Margin District**, now with a short cinematic/narrative flow:
+
+1. Wake-up animation with the world fading into view.
+2. Full-screen conversation with Mara.
+3. Follow the first signal mark.
+4. Fight two copied Riflemen.
+5. Full-screen post-fight dialogue.
+6. Investigate the old relay.
+7. Hear an unknown voice over the relay.
+8. Survive a three-enemy ambush including a Rusher.
+9. Reach extraction.
+10. Finish Chapter Zero with a full-screen dialogue sting.
+
+Full-screen story dialogue pauses player input. Press `Space` or `Enter` to advance each page.
 
 ## Controls
 
 - `WASD` — move
 - Mouse — look
-- Hold `LMB` — automatic fire
-- **Tap `RMB`** — reload
-- **Hold `RMB`** — aim down sights
-- Hold `RMB` with the **Ruler Rifle** — full magnified scope
+- Hold `LMB` — fire / repeatedly slash with the knife
+- Tap `RMB` — reload firearms
+- Hold `RMB` — ADS
+- Hold `RMB` with the **Ruler Rifle** — full scope
 - `Shift` — sprint
 - `Ctrl` / `C` — crouch; use while sprinting to slide
 - `Q` — directional dash
-- `Space` — jump / momentum jump from a slide
-- `1` to `6` — switch unlocked weapons
+- `Space` — jump / slide jump / advance Story dialogue
+- `0` — Ink Knife
+- `1` to `6` — firearms
 - `Esc` — pause / release pointer lock
 
-The RMB control remains hybrid: a quick tap reloads, while holding it enters ADS.
+## Weapon silhouettes
 
-## ADS / scope fix
+The weapon viewmodels are no longer one rifle scaled six different ways.
 
-The Ruler Rifle keeps its clean full-screen scope, with the 3D rifle removed from the fully scoped sight picture.
+| Key | Weapon | Visual / gameplay identity |
+| --- | --- | --- |
+| `0` | Ink Knife | dedicated blade, guard, handle and hand; close-range melee |
+| `1` | Sketch Carbine | original modular rifle silhouette |
+| `2` | Pencil Pistol | dedicated short slide, frame, pistol grip and short barrel |
+| `3` | Cross-Out Shotgun | long barrel/tube, pump and shotgun stock |
+| `4` | Scribble SMG | compact receiver, short front end, straight magazine and foregrip |
+| `5` | Ruler Rifle | long precision barrel, ruler rail and scope |
+| `6` | Marker Heavy | thick marker-like cylindrical body and oversized muzzle |
 
-Every other weapon now uses a dedicated **focus sight** when holding RMB:
+The knife is unlocked from the start. Firearm progression remains tied to Arena rounds.
 
-- the normal crosshair disappears
-- a hand-drawn iron/focus reticle appears at screen center
-- the weapon is lowered and shifted away from the center on a per-weapon basis
-- the SMG, Marker Heavy, shotgun, carbine and pistol no longer cover the aiming point
-- aiming still reduces weapon spread and uses each weapon's own ADS FOV
+## Enemy death effect — cube breakup
 
-## Platform / jumping fix
+Enemy deaths now physically break apart into **paper/ink cube chunks**:
 
-The movement controller now treats collider tops as real walkable surfaces instead of pretending every box extends to the heavens.
+- chunks originate around the enemy's actual body parts
+- headshots create a more violent breakup
+- cubes burst outward with gravity and angular spin
+- chunks bounce and skid across the paper floor
+- blue sketch outlines remain around each fragment
+- fragments fade and shrink away after settling
+- Heavies, Guardians and The Artist create larger breakup effects
+- the existing loose ink scribbles remain as a secondary accent behind the cube breakup
 
-New behavior:
+The original body pieces disappear quickly after death so the cube fragmentation becomes the dominant death animation.
 
-- falling onto a box/platform lands on its top surface
-- jumping over low cover lets the player land on it
-- walking off a raised platform correctly transitions into a fall
-- small height changes can be stepped up automatically
-- ceiling collision prevents jumping through the underside of geometry
-- crouch/slide collider height continues to work on raised surfaces
+## Sniper platform / movement collision
 
-### Sniper Nest
+Sketchyard XL includes a high sniper nest. Its staircase was rebuilt as straight, overlapping solid blocks with smaller height increments, removing the gaps that could let the player fall through. Platform tops use the controller's walkable-surface logic, so the player can climb, land on and walk off raised geometry normally.
 
-Sketchyard XL now contains a high **Sniper Nest** near the left side of the arena:
+## Combat / movement already included
 
-- elevated deck around 4.45m above the floor
-- eight physical stair steps leading up to it
-- low sketch railings
-- long sightlines over the arena
-- useful position for the Ruler Rifle and sniper testing
+- crouch
+- sprint-to-slide
+- slide jump momentum
+- directional dash
+- headshots
+- enemy flinch and knockback
+- ink impact effects
+- health / stamina / ammo
+- pickups
+- automatic fire
+- reload animation
+- procedural combat audio
+- ADS and Ruler Rifle scope
+- Rifleman, Rusher, Sniper, Heavy, Flanker and boss AI
+- dynamic round layouts
+- taped-paper menus
+- desktop-only mobile notice
 
-## Story Mode // Chapter Zero: The Margin
+## Mobile
 
-This is intentionally a short campaign prototype, not a full story campaign yet.
-
-The story map is physically separate from Sketchyard XL and has a tighter street/corridor layout made from tall paper buildings and a checkpoint gate.
-
-Current sequence:
-
-1. Spawn in the **Margin District**.
-2. Receive radio dialogue from **Mara**.
-3. Follow a drawn signal marker down the street.
-4. Reach the signal and trigger a two-enemy contact.
-5. Eliminate both figures.
-6. Follow a second marker to extraction.
-7. Receive the Chapter Zero ending dialogue and return to the main menu.
-
-The story HUD includes a current objective and radio dialogue panel. Death during the combat section respawns the player at a nearby story checkpoint rather than back in Sketchyard XL.
-
-## Arena match structure
-
-Arena Mode is divided into five escalating rounds with capped simultaneous enemy pressure.
-
-### Round 1 — First Marks
-Basic Riflemen and the original arena layout.
-
-### Round 2 — Close the Gap
-Rushers arrive and low barricades are drawn into the arena.
-
-### Round 3 — Long Lines
-Snipers arrive and new cover breaks open sightlines.
-
-### Round 4 — Bad Ideas in Blue Ink
-Heavies and Flankers enter while diagonal cover changes the center lanes.
-
-### Round 5 — The Final Drawing
-Clear a mixed wave, then face **The Artist** alone through three phases and multiple arena redraws.
-
-After Round 5, the next Page begins with gentle enemy health/damage scaling while unlocked weapons remain available.
-
-## Weapons
-
-| Key | Weapon | Role | Availability |
-| --- | --- | --- | --- |
-| `1` | Sketch Carbine | automatic all-rounder | Start |
-| `2` | Pencil Pistol | precision sidearm | Start |
-| `3` | Cross-Out Shotgun | close-range multi-pellet damage | Round 2 |
-| `4` | Scribble SMG | high fire rate / aggression | Round 3 |
-| `5` | Ruler Rifle | precision / scoped anti-heavy weapon | Round 4 |
-| `6` | Marker Heavy | slow heavy automatic damage | Round 5 |
-
-## Current core loop
-
-### Arena
-Move → fight → unlock weapons → survive escalating rounds → use changing cover → fight The Artist → advance to the next Page.
-
-### Story prototype
-Explore → receive dialogue → follow a marker → survive a scripted encounter → extract → complete Chapter Zero.
-
-The larger unfinished systems remain objectives for Arena Mode, Ink currency, draw-your-upgrades, a longer story campaign, more story-specific AI encounters, and additional maps.
-
-## UI polish pass
-- Main, pause, controls, and settings sheets now use visible masking-tape strips.
-- Bottom HUD regions have been separated to prevent weapon/control text overlap.
-- The idle `DASH READY` badge has been removed; movement status appears only when crouching, sliding, dashing, or aiming.
-- Mobile/coarse-pointer devices now receive a themed full-screen notice directing players to a laptop/desktop; mobile controls are marked as coming soon.
+Phones and coarse-pointer devices receive a themed message asking the player to use a laptop/desktop. Mobile controls are planned later.
