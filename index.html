@@ -21,10 +21,10 @@
   <div id="hud">
     <div id="top-left">
       <div class="stamp">FIELD TEST // LIVING PAGE</div>
-      <div class="status-row"><span>MAP</span><b>SKETCHYARD XL</b></div>
-      <div class="status-row"><span>PAGE</span><b id="page-count">1</b></div>
-      <div class="status-row"><span>ROUND</span><b id="round-count">1 / 5</b></div>
-      <div class="status-row"><span>THREATS</span><b id="target-count">0 / 3</b></div>
+      <div class="status-row"><span>MAP</span><b id="map-name">SKETCHYARD XL</b></div>
+      <div class="status-row"><span id="page-label">PAGE</span><b id="page-count">1</b></div>
+      <div class="status-row"><span id="round-label">ROUND</span><b id="round-count">1 / 5</b></div>
+      <div class="status-row"><span id="target-label">THREATS</span><b id="target-count">0 / 3</b></div>
       <div class="status-row"><span>WEAPON</span><b id="weapon-name">SKETCH CARBINE</b></div>
     </div>
 
@@ -51,6 +51,14 @@
       <div class="scope-note">RULER OPTIC // HOLD RMB</div>
     </div>
 
+    <div id="ads-overlay" aria-hidden="true">
+      <div class="ads-notch ads-notch-left"></div>
+      <div class="ads-notch ads-notch-right"></div>
+      <div class="ads-post"></div>
+      <div class="ads-dot"></div>
+      <div class="ads-note">FOCUS SIGHT // HOLD RMB</div>
+    </div>
+
     <div id="boss-hud" aria-live="polite">
       <div class="boss-kicker">ROUND 5 // FINAL DRAWING</div>
       <div class="boss-name">THE ARTIST</div>
@@ -59,6 +67,15 @@
     </div>
 
     <div id="combat-message"></div>
+
+    <div id="story-hud" aria-live="polite">
+      <div id="story-objective"><span>OBJECTIVE</span><b id="story-objective-text">FOLLOW THE SIGNAL</b></div>
+      <div id="story-dialogue">
+        <b id="story-speaker">MARA // RADIO</b>
+        <span id="story-dialogue-text">If you can hear me, keep moving.</span>
+      </div>
+    </div>
+
     <div id="damage-vignette" aria-hidden="true"></div>
 
     <div id="bottom-left">
@@ -88,7 +105,7 @@
     </div>
 
     <div id="bottom-right">
-      <div id="movement-note">DASH READY</div>
+      <div id="movement-note" aria-live="polite"></div>
       <div class="coords" id="coords">X 0.0 // Z 0.0</div>
       <div class="controls-mini">1-6 WEAPONS · WASD MOVE · SHIFT SPRINT · CTRL/C SLIDE · Q DASH · SPACE JUMP · HOLD LMB FIRE · TAP RMB RELOAD · HOLD RMB AIM</div>
     </div>
@@ -104,16 +121,19 @@
         <p class="subtitle">Fight through a notebook that redraws itself around you. Survive five escalating rounds, unlock stranger weapons, and cross out The Artist.</p>
 
         <div class="menu-actions">
-          <button class="menu-primary" id="play-btn">PLAY</button>
+          <button class="menu-primary" id="play-btn">ARENA MODE</button>
+          <button class="menu-primary story-button" id="story-btn">STORY MODE // PROLOGUE</button>
           <button class="menu-secondary" data-open-panel="controls">CONTROLS</button>
           <button class="menu-secondary" data-open-panel="settings">SETTINGS</button>
         </div>
 
         <div class="menu-doodle" aria-hidden="true"><span></span><span></span><span></span></div>
-        <p class="footnote">SKETCHYARD XL · Living Page · Mouse + keyboard</p>
+        <p class="footnote">ARENA: SKETCHYARD XL · STORY: CHAPTER ZERO // THE MARGIN · Mouse + keyboard</p>
       </section>
 
       <section class="sheet menu-panel" id="controls-menu-panel" data-panel="controls">
+        <div class="tape tape-a"></div>
+        <div class="tape tape-b"></div>
         <p class="eyebrow">FIELD NOTES // CONTROLS</p>
         <h2>HOW TO SURVIVE THE PAGE</h2>
         <div class="instruction-grid controls-grid">
@@ -126,11 +146,13 @@
           <div><b>Q</b><span>directional dash</span></div>
           <div><b>SPACE</b><span>jump · slide jump</span></div>
         </div>
-        <p class="menu-note">Ruler Rifle: hold RMB for the full scope. Other weapons use standard ADS.</p>
+        <p class="menu-note">Ruler Rifle: hold RMB for the full scope. Other weapons lower into a clear focus sight so the gun no longer eats the center of your screen.</p>
         <button class="menu-secondary menu-back" data-open-panel="main">← BACK</button>
       </section>
 
       <section class="sheet menu-panel" id="settings-menu-panel" data-panel="settings">
+        <div class="tape tape-a"></div>
+        <div class="tape tape-b"></div>
         <p class="eyebrow">FIELD NOTES // SETTINGS</p>
         <h2>TUNE THE SCRIBBLE</h2>
         <div class="settings-list">
@@ -152,6 +174,8 @@
       </section>
 
       <section class="sheet menu-panel" id="pause-menu-panel" data-panel="pause">
+        <div class="tape tape-a"></div>
+        <div class="tape tape-b"></div>
         <p class="eyebrow">PAGE PAUSED</p>
         <h2>INK DRIES. ENEMIES WAIT.</h2>
         <p class="subtitle pause-copy">Your current round stays exactly where it is.</p>
@@ -164,6 +188,19 @@
         </div>
       </section>
     </div>
+  </div>
+
+  <div id="mobile-gate" aria-live="polite">
+    <section class="mobile-note">
+      <div class="tape tape-a"></div>
+      <div class="tape tape-b"></div>
+      <p class="eyebrow">SKETCH//FIRE // FIELD NOTICE</p>
+      <h2>THIS PAGE NEEDS A BIGGER DESK.</h2>
+      <p>SKETCH//FIRE currently uses mouse-look, keyboard movement and desktop pointer-lock controls.</p>
+      <strong>PLAY ON A LAPTOP OR DESKTOP</strong>
+      <span>MOBILE VERSION // COMING SOON</span>
+      <div class="mobile-scribble" aria-hidden="true"></div>
+    </section>
   </div>
 
   <script type="module" src="./main.js"></script>

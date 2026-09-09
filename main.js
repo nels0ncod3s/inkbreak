@@ -13,6 +13,7 @@ const HALF_MAP = MAP_SIZE / 2;
 const game = document.querySelector('#game');
 const menu = document.querySelector('#menu');
 const playBtn = document.querySelector('#play-btn');
+const storyBtn = document.querySelector('#story-btn');
 const staminaFill = document.querySelector('#stamina-fill');
 const staminaValue = document.querySelector('#stamina-value');
 const coordsEl = document.querySelector('#coords');
@@ -39,6 +40,14 @@ const scopeOverlayEl = document.querySelector('#scope-overlay');
 const bossHudEl = document.querySelector('#boss-hud');
 const bossHealthFillEl = document.querySelector('#boss-health-fill');
 const bossPhaseEl = document.querySelector('#boss-phase');
+const mapNameEl = document.querySelector('#map-name');
+const pageLabelEl = document.querySelector('#page-label');
+const roundLabelEl = document.querySelector('#round-label');
+const targetLabelEl = document.querySelector('#target-label');
+const storyHudEl = document.querySelector('#story-hud');
+const storyObjectiveTextEl = document.querySelector('#story-objective-text');
+const storySpeakerEl = document.querySelector('#story-speaker');
+const storyDialogueTextEl = document.querySelector('#story-dialogue-text');
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(PAPER);
@@ -72,6 +81,7 @@ const volumeSetting = document.querySelector('#volume-setting');
 const volumeValue = document.querySelector('#volume-value');
 
 let gameStarted = false;
+let gameMode = 'arena';
 let currentMenuPanel = 'main';
 let previousMenuPanel = 'main';
 let userBaseFov = 72;
@@ -112,30 +122,39 @@ volumeSetting?.addEventListener('input', () => {
   setMasterVolume(value);
 });
 
-playBtn.addEventListener('click', () => {
+function launchGameMode(mode) {
   getAudioContext();
+  gameMode = mode;
+  resetRunToBoot();
   gameStarted = true;
   document.body.classList.remove('front-menu');
+  document.body.classList.toggle('story-mode', gameMode === 'story');
   controls.lock();
-});
+}
+
+playBtn.addEventListener('click', () => launchGameMode('arena'));
+storyBtn?.addEventListener('click', () => launchGameMode('story'));
 resumeBtn?.addEventListener('click', () => controls.lock());
 restartRunBtn?.addEventListener('click', () => {
   resetRunToBoot();
   gameStarted = true;
   document.body.classList.remove('front-menu');
+  document.body.classList.toggle('story-mode', gameMode === 'story');
   controls.lock();
 });
 mainMenuBtn?.addEventListener('click', () => {
   resetRunToBoot();
   gameStarted = false;
   document.body.classList.add('front-menu');
+  document.body.classList.remove('story-mode');
   showMenuPanel('main', false);
 });
 
 controls.addEventListener('lock', () => {
   document.body.classList.remove('front-menu');
   menu.classList.remove('visible');
-  if (typeof roundState !== 'undefined' && roundState === 'boot') startRound(1);
+  if (gameMode === 'arena' && typeof roundState !== 'undefined' && roundState === 'boot') startRound(1);
+  if (gameMode === 'story' && typeof storyState !== 'undefined' && storyState === 'boot') startStoryMode();
 });
 controls.addEventListener('unlock', () => {
   showMenuPanel(gameStarted ? 'pause' : 'main', false);
@@ -317,8 +336,44 @@ function buildMap() {
   makeSketchBox({ x: -27, y: 1.4, z: -3, w: 4.6, h: 2.8, d: 4.6, shade: true, rotationY: .04 });
   makeSketchBox({ x: 27, y: 1.4, z: 4, w: 4.6, h: 2.8, d: 4.6, shade: true, rotationY: -.05 });
 
+  buildSniperPlatform();
   addFloorScribbles();
   addMapLabels();
+}
+
+
+function buildSniperPlatform() {
+  // A readable, climbable sniper nest. The stairs rise in <= 0.5m steps so the
+  // controller can step onto them naturally, while the deck sits high enough to
+  // create a genuinely useful long-range angle over the arena.
+  const towerX = -29;
+  const towerZ = 11.5;
+  const deckTop = 4.45;
+
+  makeSketchBox({ x: towerX, y: deckTop - .28, z: towerZ, w: 5.6, h: .56, d: 5.6, shade: true });
+  makeSketchBox({ x: towerX - 2.35, y: 2.1, z: towerZ, w: .34, h: 4.2, d: 5.0, shade: true });
+  makeSketchBox({ x: towerX + 2.35, y: 2.1, z: towerZ, w: .34, h: 4.2, d: 5.0, shade: true });
+
+  // Stair blocks grow upward from the floor. This avoids floaty geometry and gives
+  // the step-up system clean collider tops to work with.
+  for (let i = 0; i < 8; i++) {
+    const top = .50 * (i + 1);
+    makeSketchBox({
+      x: towerX,
+      y: top / 2,
+      z: towerZ + 8.75 - i * .75,
+      w: 2.7,
+      h: top,
+      d: .82,
+      shade: i % 2 === 0,
+      rotationY: (i % 2 ? -.012 : .012)
+    });
+  }
+
+  // Low railings, deliberately incomplete so the player can still jump off.
+  makeSketchBox({ x: towerX, y: deckTop + .52, z: towerZ - 2.55, w: 5.2, h: .86, d: .16, shade: true });
+  makeSketchBox({ x: towerX - 2.55, y: deckTop + .52, z: towerZ, w: .16, h: .86, d: 5.0, shade: true });
+  makeLabel('SNIPER NEST ↑', new THREE.Vector3(towerX, deckTop + 1.4, towerZ + 1.2), 0, .68);
 }
 
 function buildNotebookGrid() {
@@ -367,6 +422,7 @@ function makeLabel(text, position, rotationY = 0, scale = 2.2) {
   sprite.scale.set(scale * 4, scale, 1);
   sprite.material.rotation = rotationY;
   scene.add(sprite);
+  return sprite;
 }
 
 function addMapLabels() {
@@ -378,6 +434,92 @@ function addMapLabels() {
 }
 
 buildMap();
+
+// ---------- Story Mode prototype map ----------
+const STORY_X = 140;
+const STORY_Z = 0;
+const STORY_SIZE_X = 46;
+const STORY_SIZE_Z = 52;
+const STORY_SPAWN = new THREE.Vector3(STORY_X, 1.72, 20);
+const STORY_SIGNAL = new THREE.Vector3(STORY_X, 0, -3);
+const STORY_EXTRACTION = new THREE.Vector3(STORY_X, 0, -21);
+let storyMarker = null;
+
+function buildGridPatch(cx, cz, sx, sz, step = 2) {
+  const pts = [];
+  for (let z = -sz/2; z <= sz/2; z += step) {
+    pts.push(cx - sx/2, .011, cz + z, cx + sx/2, .011, cz + z);
+  }
+  for (let x = -sx/2; x <= sx/2; x += step) {
+    pts.push(cx + x, .011, cz - sz/2, cx + x, .011, cz + sz/2);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+  scene.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: INK, transparent: true, opacity: .085 })));
+}
+
+function buildStoryMap() {
+  makeSketchBox({ x: STORY_X, y: -.18, z: STORY_Z, w: STORY_SIZE_X, h: .35, d: STORY_SIZE_Z, collider: false, jitter: false });
+  buildGridPatch(STORY_X, STORY_Z, STORY_SIZE_X, STORY_SIZE_Z);
+
+  const hx = STORY_SIZE_X / 2;
+  const hz = STORY_SIZE_Z / 2;
+  makeSketchBox({ x: STORY_X, y: 2.8, z: STORY_Z - hz - .5, w: STORY_SIZE_X + 2, h: 5.6, d: 1, shade: true });
+  makeSketchBox({ x: STORY_X, y: 2.8, z: STORY_Z + hz + .5, w: STORY_SIZE_X + 2, h: 5.6, d: 1, shade: true });
+  makeSketchBox({ x: STORY_X - hx - .5, y: 2.8, z: STORY_Z, w: 1, h: 5.6, d: STORY_SIZE_Z + 2, shade: true });
+  makeSketchBox({ x: STORY_X + hx + .5, y: 2.8, z: STORY_Z, w: 1, h: 5.6, d: STORY_SIZE_Z + 2, shade: true });
+
+  // A narrow paper district, intentionally different from the open arena.
+  const blocks = [
+    [-14, 13, 8, 6, 9], [14, 13, 8, 7, 9],
+    [-14, 1, 8, 8, 8], [14, 2, 8, 6, 8],
+    [-14, -12, 8, 7, 9], [14, -12, 8, 8, 9],
+    [-8, -20, 5, 4.5, 6], [9, -20, 6, 5.2, 6]
+  ];
+  blocks.forEach(([dx,z,w,h,d], i) => makeSketchBox({
+    x: STORY_X + dx, y: h/2, z, w, h, d, shade: i % 2 === 0, rotationY: (i % 3 - 1) * .025
+  }));
+
+  // Street cover and a broken checkpoint gate.
+  makeSketchBox({ x: STORY_X - 5.6, y: .7, z: 7, w: 3.8, h: 1.4, d: 1.0, rotationY: .08 });
+  makeSketchBox({ x: STORY_X + 5.4, y: .55, z: 1, w: 3.1, h: 1.1, d: 2.1, shade: true, rotationY: -.08 });
+  makeSketchBox({ x: STORY_X - 5.7, y: 1.4, z: -8, w: .65, h: 2.8, d: 4.8, shade: true });
+  makeSketchBox({ x: STORY_X + 5.7, y: 1.4, z: -8, w: .65, h: 2.8, d: 4.8, shade: true });
+  makeSketchBox({ x: STORY_X, y: 2.65, z: -8, w: 11.0, h: .45, d: .55, shade: true });
+
+  makeLabel('MARGIN DISTRICT', new THREE.Vector3(STORY_X, 4.2, 15), 0, .85);
+  makeLabel('SIGNAL ↓', new THREE.Vector3(STORY_X, .12, -1.5), 0, .56);
+  makeLabel('EXIT?', new THREE.Vector3(STORY_X, 3.0, -23.8), 0, .58);
+}
+
+function createStoryMarker() {
+  const group = new THREE.Group();
+  const material = new THREE.LineBasicMaterial({ color: INK, transparent: true, opacity: .78 });
+  for (let pass = 0; pass < 3; pass++) {
+    const pts = [];
+    const r = 1.0 + pass * .06;
+    for (let i = 0; i < 42; i++) {
+      const a = (i / 42) * Math.PI * 2;
+      pts.push(new THREE.Vector3(Math.cos(a) * r, .03 + pass * .012, Math.sin(a) * r));
+    }
+    const g = new THREE.BufferGeometry().setFromPoints(pts);
+    const loop = new THREE.LineLoop(g, material.clone());
+    loop.rotation.y = pass * .03;
+    group.add(loop);
+  }
+  const arrow = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(0, 3.1, 0), new THREE.Vector3(0, .45, 0),
+    new THREE.Vector3(-.35, .85, 0), new THREE.Vector3(0, .45, 0),
+    new THREE.Vector3(.35, .85, 0)
+  ]);
+  group.add(new THREE.LineSegments(arrow, material.clone()));
+  group.visible = false;
+  scene.add(group);
+  return group;
+}
+
+buildStoryMap();
+storyMarker = createStoryMarker();
 
 // ---------- Living page / dynamic redraw system ----------
 const dynamicStructures = [];
@@ -677,6 +819,12 @@ let roundBannerHideAt = 0;
 let playerInvulnerableUntil = 0;
 let roundWarmupUntil = 0;
 let activeArtist = null;
+
+let storyState = 'boot';
+let storyStage = 0;
+let storyNextAt = 0;
+let storyKills = 0;
+let storyCompletionAt = 0;
 
 let audioContext = null;
 let masterGainNode = null;
@@ -1087,7 +1235,8 @@ function startEnemyDeath(enemy, part) {
   spawnDeathScribbles(enemy, part === 'head');
   playImpactSound('kill');
 
-  roundKills += 1;
+  if (gameMode === 'story') storyKills += 1;
+  else roundKills += 1;
   totalKills += 1;
   updateRoundHud();
   if (enemy.type === 'artist') {
@@ -1306,9 +1455,23 @@ function showRoundBanner(kicker, title, subtitle, duration = 1800) {
 }
 
 function updateRoundHud() {
+  if (gameMode === 'story') {
+    mapNameEl.textContent = 'MARGIN DISTRICT';
+    pageLabelEl.textContent = 'CHAPTER';
+    pageCountEl.textContent = 'ZERO';
+    roundLabelEl.textContent = 'SECTION';
+    roundCountEl.textContent = storyState === 'complete' ? 'COMPLETE' : 'THE MARGIN';
+    targetLabelEl.textContent = storyState === 'combat' ? 'CONTACTS' : 'SIGNAL';
+    targetCountEl.textContent = storyState === 'combat' ? `${storyKills} / 2` : (storyState === 'extract' ? 'EXIT' : '---');
+    return;
+  }
   const def = ROUND_DEFINITIONS[currentRoundIndex];
+  mapNameEl.textContent = 'SKETCHYARD XL';
+  pageLabelEl.textContent = 'PAGE';
   pageCountEl.textContent = pageNumber;
+  roundLabelEl.textContent = 'ROUND';
   roundCountEl.textContent = `${currentRoundIndex + 1} / ${ROUND_DEFINITIONS.length}`;
+  targetLabelEl.textContent = 'THREATS';
   targetCountEl.textContent = `${roundKills} / ${def.queue.length}`;
 }
 
@@ -1328,6 +1491,13 @@ function resetRunToBoot() {
   enemies.forEach(deactivateEnemy);
   clearDynamicStructures();
   activeArtist = null;
+  storyState = 'boot';
+  storyStage = 0;
+  storyNextAt = 0;
+  storyKills = 0;
+  storyCompletionAt = 0;
+  storyHudEl.classList.remove('visible');
+  if (storyMarker) storyMarker.visible = false;
 
   pageNumber = 1;
   currentRoundIndex = 0;
@@ -1339,7 +1509,8 @@ function resetRunToBoot() {
   roundWarmupUntil = 0;
   roundBannerHideAt = 0;
 
-  camera.position.set(0, STAND_EYE_HEIGHT, 16);
+  if (gameMode === 'story') camera.position.set(STORY_X, STAND_EYE_HEIGHT, 20);
+  else camera.position.set(0, STAND_EYE_HEIGHT, 16);
   camera.fov = userBaseFov;
   camera.updateProjectionMatrix();
   velocity.set(0, 0, 0);
@@ -1383,8 +1554,11 @@ function resetRunToBoot() {
   updateRoundHud();
   staminaFill.style.transform = 'scaleX(1)';
   staminaValue.textContent = '100';
-  movementNoteEl.textContent = 'DASH READY';
+  movementNoteEl.textContent = '';
+  movementNoteEl.classList.remove('active', 'aiming');
+  document.body.classList.toggle('story-mode', gameMode === 'story');
 }
+
 
 function refillBetweenRounds() {
   playerHealth = Math.min(100, playerHealth + 28);
@@ -1437,7 +1611,7 @@ function finishCurrentRound(now) {
 
 function updateRoundProgression(now) {
   if (roundBannerEl.classList.contains('visible') && now >= roundBannerHideAt) roundBannerEl.classList.remove('visible');
-  if (!controls.isLocked) return;
+  if (!controls.isLocked || gameMode !== 'arena') return;
 
   if (roundState === 'warmup' && now >= roundWarmupUntil) {
     roundState = 'active';
@@ -1455,6 +1629,121 @@ function updateRoundProgression(now) {
       startRound(currentRoundIndex + 2);
     }
   }
+}
+
+function showStoryDialogue(speaker, text, objective) {
+  storySpeakerEl.textContent = speaker;
+  storyDialogueTextEl.textContent = text;
+  if (objective) storyObjectiveTextEl.textContent = objective;
+  storyHudEl.classList.add('visible');
+  updateRoundHud();
+}
+
+function setStoryMarker(position, visible = true) {
+  if (!storyMarker) return;
+  storyMarker.position.copy(position);
+  storyMarker.visible = visible;
+}
+
+function spawnStoryContacts() {
+  enemies.forEach(deactivateEnemy);
+  const available = enemies.filter(e => !e.activeInRound && !e.alive && !e.dying);
+  if (available[0]) configureEnemy(available[0], 'rifleman', [STORY_X - 5.5, -15.2]);
+  if (available[1]) configureEnemy(available[1], 'rifleman', [STORY_X + 5.0, -17.0]);
+  storyKills = 0;
+  roundState = 'active';
+  playerInvulnerableUntil = Math.max(playerInvulnerableUntil, performance.now() + 850);
+  updateRoundHud();
+}
+
+function startStoryMode() {
+  enemies.forEach(deactivateEnemy);
+  clearDynamicStructures();
+  bossHudEl.classList.remove('visible');
+  roundBannerEl.classList.remove('visible');
+  storyState = 'intro';
+  storyStage = 0;
+  storyKills = 0;
+  storyNextAt = performance.now() + 420;
+  storyCompletionAt = 0;
+  roundState = 'story';
+  camera.position.set(STORY_X, STAND_EYE_HEIGHT, 20);
+  verticalOffset = 0;
+  currentEyeHeight = STAND_EYE_HEIGHT;
+  velocity.set(0, 0, 0);
+  playerHealth = 100;
+  stamina = 100;
+  playerInvulnerableUntil = performance.now() + 1800;
+  setStoryMarker(STORY_SIGNAL, false);
+  storyHudEl.classList.add('visible');
+  showStoryDialogue('MARA // RADIO', '...signal trying to lock. Keep breathing. I need to know you can still move.', 'LISTEN');
+  updateHealthHud();
+  updateRoundHud();
+  showRoundBanner('STORY MODE // CHAPTER ZERO', 'THE MARGIN', 'A SHORT PROLOGUE PROTOTYPE', 2200);
+}
+
+function updateStoryMode(now, dt) {
+  if (gameMode !== 'story' || !controls.isLocked || storyState === 'boot') return;
+
+  if (storyMarker?.visible) {
+    storyMarker.rotation.y += dt * .72;
+    const pulse = 1 + Math.sin(now * .004) * .06;
+    storyMarker.scale.set(pulse, 1, pulse);
+  }
+
+  if (storyState === 'intro' && now >= storyNextAt) {
+    if (storyStage === 0) {
+      storyStage = 1;
+      storyNextAt = now + 3000;
+      showStoryDialogue('MARA // RADIO', 'You are in the Margin District. It was blank yesterday. Now it keeps drawing itself.', 'LISTEN');
+    } else {
+      storyState = 'reachSignal';
+      setStoryMarker(STORY_SIGNAL, true);
+      showStoryDialogue('MARA // RADIO', 'There is a signal mark down the street. Reach it. I will guide you from there.', 'REACH THE SIGNAL MARK');
+    }
+  } else if (storyState === 'reachSignal') {
+    const dist = Math.hypot(camera.position.x - STORY_SIGNAL.x, camera.position.z - STORY_SIGNAL.z);
+    if (dist < 2.25) {
+      setStoryMarker(STORY_SIGNAL, false);
+      storyState = 'combat';
+      showStoryDialogue('MARA // RADIO', 'Stop. Two figures ahead. Those are not drawings anymore. Cross them out before they reach you.', 'ERASE THE TWO CONTACTS');
+      spawnStoryContacts();
+      playRoundStinger('round');
+    }
+  } else if (storyState === 'combat') {
+    if (storyKills >= 2 && activeEnemyCount() === 0) {
+      storyState = 'extract';
+      roundState = 'story';
+      setStoryMarker(STORY_EXTRACTION, true);
+      playerHealth = Math.min(100, playerHealth + 35);
+      updateHealthHud();
+      showStoryDialogue('MARA // RADIO', 'Good. The ink reacted to you. That should be impossible. Reach the exit mark before the page changes its mind.', 'REACH THE EXTRACTION MARK');
+      showRoundBanner('CHAPTER ZERO', 'CONTACTS ERASED', 'MOVE TO THE EXIT MARK', 1800);
+    }
+  } else if (storyState === 'extract') {
+    const dist = Math.hypot(camera.position.x - STORY_EXTRACTION.x, camera.position.z - STORY_EXTRACTION.z);
+    if (dist < 2.35) {
+      setStoryMarker(STORY_EXTRACTION, false);
+      storyState = 'complete';
+      roundState = 'story';
+      storyCompletionAt = now + 5200;
+      showStoryDialogue('MARA // RADIO', 'You made it. Do not celebrate. This was only the margin. Something on the next page knows you are here.', 'CHAPTER ZERO COMPLETE');
+      showRoundBanner('STORY MODE', 'CHAPTER ZERO COMPLETE', 'THE MARGIN // PROLOGUE END', 4200);
+      playRoundStinger('complete');
+      updateRoundHud();
+    }
+  } else if (storyState === 'complete' && storyCompletionAt && now >= storyCompletionAt) {
+    storyCompletionAt = 0;
+    gameStarted = false;
+    document.body.classList.add('front-menu');
+    document.body.classList.remove('story-mode');
+    controls.unlock();
+    showMenuPanel('main', false);
+  }
+}
+
+function combatIsActive() {
+  return controls.isLocked && ((gameMode === 'arena' && roundState === 'active') || (gameMode === 'story' && storyState === 'combat'));
 }
 
 function updateEnemies(now, dt) {
@@ -1495,7 +1784,7 @@ function updateEnemies(now, dt) {
     const dist = toPlayer.length();
     const cfg = enemy.config;
 
-    if (controls.isLocked && roundState === 'active') {
+    if (combatIsActive()) {
       if (cfg.behavior === 'rusher') {
         if (dist > 1.45) moveEnemyToward(enemy, target, dt, cfg.speed);
       } else if (cfg.behavior === 'flanker') {
@@ -1553,7 +1842,7 @@ function updateEnemies(now, dt) {
 
     if (cfg.behavior === 'sniper') updateSniperTelegraph(enemy, now, target);
 
-    if (controls.isLocked && roundState === 'active' && now >= enemy.nextShotAt) {
+    if (combatIsActive() && now >= enemy.nextShotAt) {
       enemyShoot(enemy);
       if (enemy.type === 'artist') {
         const phase = enemy.bossPhase || 1;
@@ -1692,6 +1981,8 @@ const AIR_ACCEL = 8;
 const FRICTION = 12;
 const JUMP_SPEED = 7.1;
 const GRAVITY = 20;
+const STEP_HEIGHT = .62;
+const SURFACE_EPSILON = .012;
 const SLIDE_START_SPEED = 10.3;
 const SLIDE_DURATION = .82;
 const SLIDE_DECEL = 6.0;
@@ -1734,25 +2025,25 @@ const WEAPON_PROFILES = {
     slot: 1, name: 'SKETCH CARBINE', short: 'CARBINE', unlockRound: 1,
     magSize: 12, reserveMax: 84, startReserve: 48, fireInterval: .11, reloadTime: 1.85,
     bodyDamage: 38, headDamage: 82, pellets: 1, spread: 0,
-    recoil: .62, pitch: .030, muzzleZ: -1.31, visualScale: [1, 1, 1], viewOffset: [0, 0, 0], handPos: [-.13, -.17, -.58], adsPos: [0, -.185, -.66], adsFov: 58
+    recoil: .62, pitch: .030, muzzleZ: -1.31, visualScale: [1, 1, 1], viewOffset: [0, 0, 0], handPos: [-.13, -.17, -.58], adsPos: [.16, -.48, -.82], adsFov: 58
   },
   pistol: {
     slot: 2, name: 'PENCIL PISTOL', short: 'PISTOL', unlockRound: 1,
     magSize: 9, reserveMax: 63, startReserve: 36, fireInterval: .24, reloadTime: 1.45,
     bodyDamage: 46, headDamage: 105, pellets: 1, spread: .0015,
-    recoil: .48, pitch: .042, muzzleZ: -.92, visualScale: [.78, .86, .64], viewOffset: [.08, -.025, .08], handPos: [-.08, -.16, -.42], adsPos: [0, -.17, -.53], adsFov: 56
+    recoil: .48, pitch: .042, muzzleZ: -.92, visualScale: [.78, .86, .64], viewOffset: [.08, -.025, .08], handPos: [-.08, -.16, -.42], adsPos: [.12, -.42, -.68], adsFov: 56
   },
   shotgun: {
     slot: 3, name: 'CROSS-OUT SHOTGUN', short: 'SHOTGUN', unlockRound: 2,
     magSize: 6, reserveMax: 36, startReserve: 24, fireInterval: .58, reloadTime: 2.05,
     bodyDamage: 14, headDamage: 21, pellets: 8, spread: .030,
-    recoil: 1.05, pitch: .070, muzzleZ: -1.58, visualScale: [1.06, 1.02, 1.27], viewOffset: [.01, -.015, .01], handPos: [-.13, -.17, -.73], adsPos: [0, -.215, -.78], adsFov: 60
+    recoil: 1.05, pitch: .070, muzzleZ: -1.58, visualScale: [1.06, 1.02, 1.27], viewOffset: [.01, -.015, .01], handPos: [-.13, -.17, -.73], adsPos: [.18, -.52, -.95], adsFov: 60
   },
   smg: {
     slot: 4, name: 'SCRIBBLE SMG', short: 'SMG', unlockRound: 3,
     magSize: 24, reserveMax: 144, startReserve: 72, fireInterval: .072, reloadTime: 1.62,
     bodyDamage: 22, headDamage: 47, pellets: 1, spread: .005,
-    recoil: .38, pitch: .020, muzzleZ: -1.08, visualScale: [.91, .94, .80], viewOffset: [.055, -.018, .055], handPos: [-.11, -.16, -.49], adsPos: [0, -.19, -.58], adsFov: 57
+    recoil: .38, pitch: .020, muzzleZ: -1.08, visualScale: [.91, .94, .80], viewOffset: [.055, -.018, .055], handPos: [-.11, -.16, -.49], adsPos: [.15, -.47, -.76], adsFov: 57
   },
   rifle: {
     slot: 5, name: 'RULER RIFLE', short: 'RULER', unlockRound: 4,
@@ -1764,7 +2055,7 @@ const WEAPON_PROFILES = {
     slot: 6, name: 'MARKER HEAVY', short: 'MARKER', unlockRound: 5,
     magSize: 8, reserveMax: 48, startReserve: 28, fireInterval: .34, reloadTime: 2.35,
     bodyDamage: 58, headDamage: 112, pellets: 1, spread: .004,
-    recoil: 1.12, pitch: .075, muzzleZ: -1.46, visualScale: [1.26, 1.18, 1.12], viewOffset: [0, -.035, .035], handPos: [-.16, -.20, -.64], adsPos: [0, -.315, -.80], adsFov: 61
+    recoil: 1.12, pitch: .075, muzzleZ: -1.46, visualScale: [1.26, 1.18, 1.12], viewOffset: [0, -.035, .035], handPos: [-.16, -.20, -.64], adsPos: [.20, -.60, -.98], adsFov: 61
   }
 };
 
@@ -2143,7 +2434,12 @@ function damagePlayer(amount) {
 }
 
 function respawnPlayer() {
-  camera.position.set(0, EYE_HEIGHT, 16);
+  if (gameMode === 'story') {
+    const checkpointZ = (storyState === 'combat' || storyState === 'extract' || storyState === 'complete') ? -1 : 20;
+    camera.position.set(STORY_X, EYE_HEIGHT, checkpointZ);
+  } else {
+    camera.position.set(0, EYE_HEIGHT, 16);
+  }
   verticalOffset = 0;
   currentEyeHeight = STAND_EYE_HEIGHT;
   velocity.set(0, 0, 0);
@@ -2178,21 +2474,63 @@ function currentColliderHeight() {
   return (crouching || sliding) ? CROUCH_COLLIDER_HEIGHT : STAND_COLLIDER_HEIGHT;
 }
 
-function canOccupyAt(x, z, height = currentColliderHeight()) {
-  const feetY = verticalOffset;
-  const headY = verticalOffset + height;
+function overlapsBoxXZ(x, z, box, radius = PLAYER_RADIUS) {
+  return (
+    x + radius > box.min.x &&
+    x - radius < box.max.x &&
+    z + radius > box.min.z &&
+    z - radius < box.max.z
+  );
+}
 
+function canOccupyAt(x, z, height = currentColliderHeight(), feetY = verticalOffset) {
+  const headY = feetY + height;
   for (const box of colliders) {
-    const verticalOverlap = headY > box.min.y && feetY < box.max.y;
-    if (!verticalOverlap) continue;
-    if (
-      x + PLAYER_RADIUS > box.min.x &&
-      x - PLAYER_RADIUS < box.max.x &&
-      z + PLAYER_RADIUS > box.min.z &&
-      z - PLAYER_RADIUS < box.max.z
-    ) return false;
+    if (!overlapsBoxXZ(x, z, box)) continue;
+    const verticalOverlap = headY > box.min.y + .002 && feetY < box.max.y - .002;
+    if (verticalOverlap) return false;
   }
   return true;
+}
+
+function findStepHeightAt(x, z, feetY, height = currentColliderHeight()) {
+  const candidates = [];
+  for (const box of colliders) {
+    if (!overlapsBoxXZ(x, z, box)) continue;
+    const rise = box.max.y - feetY;
+    if (rise > .025 && rise <= STEP_HEIGHT + .015) candidates.push(box.max.y + SURFACE_EPSILON);
+  }
+  candidates.sort((a, b) => a - b);
+  for (const candidate of candidates) {
+    if (canOccupyAt(x, z, height, candidate)) return candidate;
+  }
+  return null;
+}
+
+function findLandingSurface(x, z, previousFeetY, nextFeetY, height = currentColliderHeight()) {
+  let best = null;
+  for (const box of colliders) {
+    if (!overlapsBoxXZ(x, z, box, PLAYER_RADIUS * .84)) continue;
+    const top = box.max.y;
+    if (top <= previousFeetY + .055 && top >= nextFeetY - .065) {
+      const candidate = top + SURFACE_EPSILON;
+      if (canOccupyAt(x, z, height, candidate) && (best === null || candidate > best)) best = candidate;
+    }
+  }
+  return best;
+}
+
+function findCeilingHeight(x, z, previousFeetY, nextFeetY, height = currentColliderHeight()) {
+  const previousHead = previousFeetY + height;
+  const nextHead = nextFeetY + height;
+  let ceiling = null;
+  for (const box of colliders) {
+    if (!overlapsBoxXZ(x, z, box, PLAYER_RADIUS * .82)) continue;
+    if (box.min.y >= previousHead - .02 && box.min.y <= nextHead + .02) {
+      if (ceiling === null || box.min.y < ceiling) ceiling = box.min.y;
+    }
+  }
+  return ceiling;
 }
 
 function tryStartSlide() {
@@ -2338,27 +2676,63 @@ function updateMovement(dt) {
 
   velocity.y -= GRAVITY * dt;
 
+  const colliderHeight = currentColliderHeight();
   const nextX = camera.position.x + velocity.x * dt;
-  if (!collidesAt(nextX, camera.position.z)) camera.position.x = nextX;
-  else {
-    velocity.x = 0;
-    if (sliding) slideSpeed *= .48;
-    if (dashTimer > 0) dashTimer = 0;
+  if (!collidesAt(nextX, camera.position.z, colliderHeight)) {
+    camera.position.x = nextX;
+  } else {
+    const stepY = grounded && dashTimer <= 0 ? findStepHeightAt(nextX, camera.position.z, verticalOffset, colliderHeight) : null;
+    if (stepY !== null) {
+      verticalOffset = stepY;
+      camera.position.x = nextX;
+      grounded = true;
+    } else {
+      velocity.x = 0;
+      if (sliding) slideSpeed *= .48;
+      if (dashTimer > 0) dashTimer = 0;
+    }
   }
 
   const nextZ = camera.position.z + velocity.z * dt;
-  if (!collidesAt(camera.position.x, nextZ)) camera.position.z = nextZ;
-  else {
-    velocity.z = 0;
-    if (sliding) slideSpeed *= .48;
-    if (dashTimer > 0) dashTimer = 0;
+  if (!collidesAt(camera.position.x, nextZ, colliderHeight)) {
+    camera.position.z = nextZ;
+  } else {
+    const stepY = grounded && dashTimer <= 0 ? findStepHeightAt(camera.position.x, nextZ, verticalOffset, colliderHeight) : null;
+    if (stepY !== null) {
+      verticalOffset = stepY;
+      camera.position.z = nextZ;
+      grounded = true;
+    } else {
+      velocity.z = 0;
+      if (sliding) slideSpeed *= .48;
+      if (dashTimer > 0) dashTimer = 0;
+    }
   }
 
-  verticalOffset += velocity.y * dt;
-  if (verticalOffset <= 0) {
-    verticalOffset = 0;
-    velocity.y = 0;
-    grounded = true;
+  const previousFeetY = verticalOffset;
+  let nextFeetY = previousFeetY + velocity.y * dt;
+  if (velocity.y > 0) {
+    const ceiling = findCeilingHeight(camera.position.x, camera.position.z, previousFeetY, nextFeetY, colliderHeight);
+    if (ceiling !== null) {
+      nextFeetY = Math.max(0, ceiling - colliderHeight - SURFACE_EPSILON);
+      velocity.y = 0;
+    }
+    verticalOffset = nextFeetY;
+    grounded = false;
+  } else {
+    const landing = findLandingSurface(camera.position.x, camera.position.z, previousFeetY, nextFeetY, colliderHeight);
+    if (landing !== null) {
+      verticalOffset = landing;
+      velocity.y = 0;
+      grounded = true;
+    } else if (nextFeetY <= 0) {
+      verticalOffset = 0;
+      velocity.y = 0;
+      grounded = true;
+    } else {
+      verticalOffset = nextFeetY;
+      grounded = false;
+    }
   }
 
   const desiredEyeHeight = (crouching || sliding) ? CROUCH_EYE_HEIGHT : STAND_EYE_HEIGHT;
@@ -2396,12 +2770,11 @@ function updateMovement(dt) {
     camera.updateProjectionMatrix();
   }
 
-  const dashRemaining = Math.max(0, dashReadyAt - now);
   if (isAiming) movementNoteEl.textContent = currentWeaponId === 'rifle' ? 'RULER OPTIC // SCOPED' : 'ADS // STEADY';
   else if (dashTimer > 0) movementNoteEl.textContent = 'DASHING';
   else if (sliding) movementNoteEl.textContent = 'SLIDING';
-  else if (crouching) movementNoteEl.textContent = dashRemaining > 0 ? `CROUCHED // DASH ${(dashRemaining/1000).toFixed(1)}s` : 'CROUCHED // DASH READY';
-  else movementNoteEl.textContent = dashRemaining > 0 ? `DASH ${(dashRemaining/1000).toFixed(1)}s` : 'DASH READY';
+  else if (crouching) movementNoteEl.textContent = 'CROUCHED';
+  else movementNoteEl.textContent = '';
   movementNoteEl.classList.toggle('active', sliding || crouching || dashTimer > 0 || isAiming);
   movementNoteEl.classList.toggle('aiming', isAiming);
 
@@ -2582,6 +2955,7 @@ function animate(now) {
   updateAimState(now);
   updateMovement(dt);
   updateRoundProgression(now);
+  updateStoryMode(now, dt);
   updateDynamicStructures(now);
   if (controls.isLocked && triggerHeld) fireTestShot();
   updateEnemies(now, dt);
