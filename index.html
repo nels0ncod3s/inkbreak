@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SKETCH//FIRE // Living Page Build</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body class="front-menu">
+  <div id="game"></div>
+  <div id="paper-noise" aria-hidden="true"></div>
+
+  <div id="hud">
+    <div id="top-left">
+      <div class="stamp">FIELD TEST // LIVING PAGE</div>
+      <div class="status-row"><span>MAP</span><b>SKETCHYARD XL</b></div>
+      <div class="status-row"><span>PAGE</span><b id="page-count">1</b></div>
+      <div class="status-row"><span>ROUND</span><b id="round-count">1 / 5</b></div>
+      <div class="status-row"><span>THREATS</span><b id="target-count">0 / 3</b></div>
+      <div class="status-row"><span>WEAPON</span><b id="weapon-name">SKETCH CARBINE</b></div>
+    </div>
+
+    <div id="round-banner" aria-live="polite">
+      <div id="round-banner-kicker">PAGE 1</div>
+      <strong id="round-banner-title">ROUND 1</strong>
+      <span id="round-banner-subtitle">RIFLEMEN INCOMING</span>
+    </div>
+
+    <div id="crosshair" aria-hidden="true">
+      <span class="h h1"></span><span class="h h2"></span>
+      <span class="v v1"></span><span class="v v2"></span>
+      <i></i>
+    </div>
+    <div id="hitmarker" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+
+    <div id="scope-overlay" aria-hidden="true">
+      <div class="scope-paper"></div>
+      <div class="scope-ring scope-ring-a"></div>
+      <div class="scope-ring scope-ring-b"></div>
+      <div class="scope-reticle scope-reticle-h"></div>
+      <div class="scope-reticle scope-reticle-v"></div>
+      <div class="scope-dot"></div>
+      <div class="scope-note">RULER OPTIC // HOLD RMB</div>
+    </div>
+
+    <div id="boss-hud" aria-live="polite">
+      <div class="boss-kicker">ROUND 5 // FINAL DRAWING</div>
+      <div class="boss-name">THE ARTIST</div>
+      <div class="boss-meter"><div id="boss-health-fill"></div></div>
+      <div id="boss-phase">PHASE I // FIRST STROKE</div>
+    </div>
+
+    <div id="combat-message"></div>
+    <div id="damage-vignette" aria-hidden="true"></div>
+
+    <div id="bottom-left">
+      <div class="hud-row">
+        <div class="hud-panel meter-panel">
+          <div class="meter-label"><span>HEALTH</span><span id="health-value">100</span></div>
+          <div class="meter health-meter"><div id="health-fill"></div></div>
+          <div class="meter-label stamina-label"><span>STAMINA</span><span id="stamina-value">100</span></div>
+          <div class="meter"><div id="stamina-fill"></div></div>
+        </div>
+
+        <div class="hud-panel ammo-panel">
+          <div class="ammo-label" id="ammo-label">SKETCH CARBINE</div>
+          <div class="ammo-value"><span id="ammo-current">12</span><small>//</small><span id="ammo-reserve">48</span></div>
+          <div id="reload-note">READY</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="weapon-rack" aria-label="weapon slots">
+      <div class="weapon-slot" data-weapon="carbine"><b>1</b><span>CARBINE</span></div>
+      <div class="weapon-slot" data-weapon="pistol"><b>2</b><span>PISTOL</span></div>
+      <div class="weapon-slot locked" data-weapon="shotgun"><b>3</b><span>SHOTGUN</span></div>
+      <div class="weapon-slot locked" data-weapon="smg"><b>4</b><span>SMG</span></div>
+      <div class="weapon-slot locked" data-weapon="rifle"><b>5</b><span>RULER</span></div>
+      <div class="weapon-slot locked" data-weapon="marker"><b>6</b><span>MARKER</span></div>
+    </div>
+
+    <div id="bottom-right">
+      <div id="movement-note">DASH READY</div>
+      <div class="coords" id="coords">X 0.0 // Z 0.0</div>
+      <div class="controls-mini">1-6 WEAPONS · WASD MOVE · SHIFT SPRINT · CTRL/C SLIDE · Q DASH · SPACE JUMP · HOLD LMB FIRE · TAP RMB RELOAD · HOLD RMB AIM</div>
+    </div>
+  </div>
+
+  <div id="menu" class="visible" data-mode="main">
+    <div class="menu-stack">
+      <section class="sheet menu-panel active" id="main-menu-panel" data-panel="main">
+        <div class="tape tape-a"></div>
+        <div class="tape tape-b"></div>
+        <p class="eyebrow">BLUE INK // LIVING PAGE BUILD</p>
+        <h1 class="scribble-title" data-text="SKETCH//FIRE">SKETCH//FIRE</h1>
+        <p class="subtitle">Fight through a notebook that redraws itself around you. Survive five escalating rounds, unlock stranger weapons, and cross out The Artist.</p>
+
+        <div class="menu-actions">
+          <button class="menu-primary" id="play-btn">PLAY</button>
+          <button class="menu-secondary" data-open-panel="controls">CONTROLS</button>
+          <button class="menu-secondary" data-open-panel="settings">SETTINGS</button>
+        </div>
+
+        <div class="menu-doodle" aria-hidden="true"><span></span><span></span><span></span></div>
+        <p class="footnote">SKETCHYARD XL · Living Page · Mouse + keyboard</p>
+      </section>
+
+      <section class="sheet menu-panel" id="controls-menu-panel" data-panel="controls">
+        <p class="eyebrow">FIELD NOTES // CONTROLS</p>
+        <h2>HOW TO SURVIVE THE PAGE</h2>
+        <div class="instruction-grid controls-grid">
+          <div><b>W A S D</b><span>move</span></div>
+          <div><b>LMB</b><span>hold to fire</span></div>
+          <div><b>RMB</b><span>tap reload · hold aim</span></div>
+          <div><b>1 - 6</b><span>switch weapons</span></div>
+          <div><b>SHIFT</b><span>sprint</span></div>
+          <div><b>CTRL / C</b><span>crouch · sprint to slide</span></div>
+          <div><b>Q</b><span>directional dash</span></div>
+          <div><b>SPACE</b><span>jump · slide jump</span></div>
+        </div>
+        <p class="menu-note">Ruler Rifle: hold RMB for the full scope. Other weapons use standard ADS.</p>
+        <button class="menu-secondary menu-back" data-open-panel="main">← BACK</button>
+      </section>
+
+      <section class="sheet menu-panel" id="settings-menu-panel" data-panel="settings">
+        <p class="eyebrow">FIELD NOTES // SETTINGS</p>
+        <h2>TUNE THE SCRIBBLE</h2>
+        <div class="settings-list">
+          <label class="setting-row">
+            <span><b>MOUSE SENSITIVITY</b><small id="sensitivity-value">0.78</small></span>
+            <input id="sensitivity-setting" type="range" min="0.35" max="1.35" step="0.01" value="0.78" />
+          </label>
+          <label class="setting-row">
+            <span><b>FIELD OF VIEW</b><small id="fov-value">72°</small></span>
+            <input id="fov-setting" type="range" min="60" max="90" step="1" value="72" />
+          </label>
+          <label class="setting-row">
+            <span><b>MASTER VOLUME</b><small id="volume-value">80%</small></span>
+            <input id="volume-setting" type="range" min="0" max="100" step="1" value="80" />
+          </label>
+        </div>
+        <p class="menu-note">Settings apply immediately. Revolutionary technology, apparently.</p>
+        <button class="menu-secondary menu-back" data-open-panel="main">← BACK</button>
+      </section>
+
+      <section class="sheet menu-panel" id="pause-menu-panel" data-panel="pause">
+        <p class="eyebrow">PAGE PAUSED</p>
+        <h2>INK DRIES. ENEMIES WAIT.</h2>
+        <p class="subtitle pause-copy">Your current round stays exactly where it is.</p>
+        <div class="menu-actions">
+          <button class="menu-primary" id="resume-btn">RESUME</button>
+          <button class="menu-secondary" id="restart-run-btn">RESTART RUN</button>
+          <button class="menu-secondary" data-open-panel="controls">CONTROLS</button>
+          <button class="menu-secondary" data-open-panel="settings">SETTINGS</button>
+          <button class="menu-secondary danger-ish" id="main-menu-btn">MAIN MENU</button>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
