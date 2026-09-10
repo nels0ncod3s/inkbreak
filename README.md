@@ -119,3 +119,10 @@ Every firearm has its own silhouette, ammo pool, recoil profile, fire cadence, A
 - Includes Apple standalone/status-bar metadata for Add to Home Screen on iPhone/iPad.
 - The manifest requests landscape orientation; iOS Safari may still require the user to rotate manually, so the in-game rotate gate remains the fallback.
 - Mobile joystick input is bound directly to the joystick and becomes active synchronously when gameplay starts; it does not wait for fullscreen/orientation APIs.
+
+## Mobile input rebuild (2026-09-10)
+- Mobile look input now binds directly to the WebGL canvas.
+- Joystick, look, fire, and action buttons use one Pointer Events implementation.
+- Removed competing Touch Events handlers and disabled the legacy invisible look overlay.
+- Story-mode firing no longer depends on Arena round boot state.
+- Added cache-busted asset URLs for mobile input revisions.

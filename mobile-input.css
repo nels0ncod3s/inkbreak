@@ -1,0 +1,65 @@
+/* INKBREAK canonical mobile-input layer.
+   Loaded AFTER styles.css so older prototype control rules cannot win cascade. */
+
+body.touch-device,
+body.touch-device #game,
+body.touch-device #game canvas {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+body.touch-device.mobile-playing,
+body.touch-device.mobile-playing #game,
+body.touch-device.mobile-playing #game canvas {
+  touch-action: none !important;
+  overscroll-behavior: none;
+}
+
+body.touch-device.mobile-playing #game canvas {
+  pointer-events: auto !important;
+}
+
+body.touch-device.mobile-playing #mobile-controls {
+  display: block;
+  pointer-events: none !important;
+  touch-action: none !important;
+}
+
+/* Look now belongs to the WebGL canvas itself. This element is visual hint only. */
+body.touch-device #mobile-look-zone {
+  pointer-events: none !important;
+  touch-action: none !important;
+  background: transparent !important;
+}
+
+body.touch-device #mobile-left-controls,
+body.touch-device #mobile-action-cluster {
+  pointer-events: none !important;
+}
+
+body.touch-device #mobile-joystick,
+body.touch-device #mobile-pause,
+body.touch-device #mobile-action-cluster button {
+  pointer-events: auto !important;
+  touch-action: none !important;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+body.touch-device #mobile-joystick {
+  cursor: default;
+}
+
+/* Keep the joystick above the canvas and the canvas above decorative HUD layers. */
+body.touch-device #mobile-controls { z-index: 60 !important; }
+body.touch-device #mobile-joystick { z-index: 4 !important; }
+body.touch-device #mobile-action-cluster { z-index: 5 !important; }
+body.touch-device #mobile-pause { z-index: 7 !important; }
+
+/* Prevent the old full-screen look layer from intercepting any touch whatsoever. */
+body.touch-device.mobile-playing #mobile-look-zone,
+body.touch-device.mobile-playing #mobile-look-zone * {
+  pointer-events: none !important;
+}

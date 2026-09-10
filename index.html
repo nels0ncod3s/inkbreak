@@ -17,7 +17,7 @@
   <meta name="apple-mobile-web-app-title" content="INKBREAK" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="format-detection" content="telephone=no" />
-  <link rel="stylesheet" href="./styles.css" />
+  <link rel="stylesheet" href="./styles.css?v=20260910-mobile-input-v4" />
   <script type="importmap">
     {
       "imports": {
@@ -291,7 +291,7 @@
 
     <!-- The whole gameplay screen is a look surface. Joystick and action buttons
          sit above it and exclusively own touches that begin on them. -->
-    <div id="mobile-look-zone" aria-label="Drag anywhere on the gameplay screen to look">
+    <div id="mobile-look-zone" aria-hidden="true">
       <span class="look-hint">DRAG TO LOOK</span>
     </div>
 
@@ -315,6 +315,7 @@
     </div>
   </div>
 
-  <script type="module" src="./main.js"></script>
+  <link rel="stylesheet" href="./mobile-input.css?v=20260910-mobile-input-v4" />
+  <script type="module" src="./main.js?v=20260910-mobile-input-v4"></script>
 </body>
 </html>
