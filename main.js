@@ -66,6 +66,8 @@ const upgradeScreenEl = document.querySelector('#upgrade-screen');
 const upgradeCardsEl = document.querySelector('#upgrade-cards');
 const upgradeInkEl = document.querySelector('#upgrade-ink');
 const chapterOneCardEl = document.querySelector('#chapter-one-card');
+const chapterTwoCardEl = document.querySelector('#chapter-two-card');
+const awarenessLayerEl = document.querySelector('#awareness-layer');
 const chapterProgressNoteEl = document.querySelector('#chapter-progress-note');
 const chapterCards = [...document.querySelectorAll('.chapter-card')];
 
@@ -149,11 +151,21 @@ volumeSetting?.addEventListener('input', () => {
 
 function refreshChapterMenu() {
   const chapterOneUnlocked = storyProgress >= 1;
+  const chapterTwoUnlocked = storyProgress >= 2;
   chapterOneCardEl?.classList.toggle('locked', !chapterOneUnlocked);
-  if (chapterProgressNoteEl) chapterProgressNoteEl.textContent = chapterOneUnlocked
-    ? 'Chapter One unlocked // progress is saved in this browser.'
-    : 'Complete Chapter Zero to unlock Wrong Page.';
-  if (storyBtn) storyBtn.textContent = chapterOneUnlocked ? 'CONTINUE STORY // WRONG PAGE' : 'STORY MODE // THE MARGIN';
+  chapterTwoCardEl?.classList.toggle('locked', !chapterTwoUnlocked);
+  if (chapterProgressNoteEl) {
+    chapterProgressNoteEl.textContent = chapterTwoUnlocked
+      ? 'Corrections unlocked // story progress is saved in this browser.'
+      : chapterOneUnlocked
+        ? 'Complete Wrong Page to unlock Corrections.'
+        : 'Complete The Margin to unlock Wrong Page.';
+  }
+  if (storyBtn) {
+    storyBtn.textContent = chapterTwoUnlocked
+      ? 'CONTINUE STORY // CORRECTIONS'
+      : chapterOneUnlocked ? 'CONTINUE STORY // WRONG PAGE' : 'STORY MODE // THE MARGIN';
+  }
 }
 
 function saveStoryProgress(value) {
@@ -174,10 +186,11 @@ function launchGameMode(mode, chapter = selectedStoryChapter) {
 }
 
 playBtn.addEventListener('click', () => launchGameMode('arena'));
-storyBtn?.addEventListener('click', () => launchGameMode('story', storyProgress >= 1 ? 1 : 0));
+storyBtn?.addEventListener('click', () => launchGameMode('story', storyProgress >= 2 ? 2 : (storyProgress >= 1 ? 1 : 0)));
 chapterCards.forEach(card => card.addEventListener('click', () => {
   const chapter = Number(card.dataset.chapter || 0);
   if (chapter === 1 && storyProgress < 1) return;
+  if (chapter === 2 && storyProgress < 2) return;
   launchGameMode('story', chapter);
 }));
 refreshChapterMenu();
@@ -445,7 +458,8 @@ function buildSniperPlatform() {
       h: top,
       d: 1.18,
       shade: i % 2 === 0,
-      rotationY: 0
+      rotationY: 0,
+      collider: false
     });
   }
 
@@ -660,22 +674,22 @@ buildStoryOneMap();
 const storyNotes = [];
 let nearbyStoryNote = null;
 let lastStoryNotePromptAt = 0;
-function createStoryNote(x,z,title,text) {
+function createStoryNote(x,z,title,text,chapter=1) {
   const mesh=makeSketchBox({x,y:.045,z,w:1.15,h:.07,d:.82,collider:false,shade:false,rotationY:(Math.random()-.5)*.25});
   mesh.userData.storyNote=true;
-  storyNotes.push({mesh,title,text,read:false});
+  storyNotes.push({mesh,title,text,read:false,chapter});
   makeLabel('NOTE',new THREE.Vector3(x,.18,z),0,.18);
 }
-createStoryNote(STORY_ONE_X-10, 15, 'FIELD NOTE // PAGE 17', 'Correctors do not arrive before a boundary failure. If they are already waiting, the page knew the breach was coming.');
-createStoryNote(STORY_ONE_X+9, -3, 'FIELD NOTE // REPAIR LOG', 'The Artist is not creating new matter. Every observed stroke matches missing geometry. It may be repairing damage.');
-createStoryNote(STORY_ONE_X-4, -23, 'FIELD NOTE // RADIO', 'MARA transmission timestamp: three days before Margin District existed. Source location unresolved.');
+createStoryNote(STORY_ONE_X-10, 15, 'FIELD NOTE // PAGE 17', 'Correctors do not arrive before a boundary failure. If they are already waiting, the page knew the breach was coming.',1);
+createStoryNote(STORY_ONE_X+9, -3, 'FIELD NOTE // REPAIR LOG', 'The Artist is not creating new matter. Every observed stroke matches missing geometry. It may be repairing damage.',1);
+createStoryNote(STORY_ONE_X-4, -23, 'FIELD NOTE // RADIO', 'MARA transmission timestamp: three days before Margin District existed. Source location unresolved.',1);
 
 function updateStoryNotes() {
   nearbyStoryNote=null;
-  if(gameMode!=='story'||selectedStoryChapter!==1||storyDialogueBlocking) return;
+  if(gameMode!=='story'||storyDialogueBlocking) return;
   let best=1.65;
   storyNotes.forEach(note=>{
-    if(note.read) return;
+    if(note.read || note.chapter !== selectedStoryChapter) return;
     const d=Math.hypot(camera.position.x-note.mesh.position.x,camera.position.z-note.mesh.position.z);
     if(d<best){best=d;nearbyStoryNote=note;}
   });
@@ -691,6 +705,65 @@ function tryReadNearbyStoryNote() {
   showStoryDialogueSequence([{kicker:note.title,speaker:'FOUND TEXT',text:note.text}]);
   return true;
 }
+
+// ---------- Story Chapter Two // Corrections ----------
+const STORY_TWO_X = 350;
+const STORY_TWO_Z = 0;
+const STORY_TWO_SIZE_X = 70;
+const STORY_TWO_SIZE_Z = 84;
+const STORY_TWO_SPAWN = new THREE.Vector3(STORY_TWO_X, 1.72, 35);
+const STORY_TWO_GATE = new THREE.Vector3(STORY_TWO_X - 5, 0, 23);
+const STORY_TWO_ARCHIVE = new THREE.Vector3(STORY_TWO_X + 4, 0, 10);
+const STORY_TWO_PRESS = new THREE.Vector3(STORY_TWO_X, 0, -4);
+const STORY_TWO_SAFE = new THREE.Vector3(STORY_TWO_X - 6, 0, -23);
+const STORY_TWO_EXIT = new THREE.Vector3(STORY_TWO_X, 0, -34);
+let storyDefenseEndsAt = 0;
+let storyDefenseWave = 0;
+let storyRunAmbushSpawned = false;
+
+function buildStoryTwoMap() {
+  makeSketchBox({ x: STORY_TWO_X, y: -.18, z: STORY_TWO_Z, w: STORY_TWO_SIZE_X, h: .35, d: STORY_TWO_SIZE_Z, collider: false, jitter: false });
+  buildGridPatch(STORY_TWO_X, STORY_TWO_Z, STORY_TWO_SIZE_X, STORY_TWO_SIZE_Z);
+  const hx=STORY_TWO_SIZE_X/2, hz=STORY_TWO_SIZE_Z/2;
+  makeSketchBox({x:STORY_TWO_X,y:3.2,z:STORY_TWO_Z-hz-.5,w:STORY_TWO_SIZE_X+2,h:6.4,d:1,shade:true});
+  makeSketchBox({x:STORY_TWO_X,y:3.2,z:STORY_TWO_Z+hz+.5,w:STORY_TWO_SIZE_X+2,h:6.4,d:1,shade:true});
+  makeSketchBox({x:STORY_TWO_X-hx-.5,y:3.2,z:STORY_TWO_Z,w:1,h:6.4,d:STORY_TWO_SIZE_Z+2,shade:true});
+  makeSketchBox({x:STORY_TWO_X+hx+.5,y:3.2,z:STORY_TWO_Z,w:1,h:6.4,d:STORY_TWO_SIZE_Z+2,shade:true});
+
+  // Archive blocks create three readable spaces: intake yard, press hall, correction corridor.
+  [
+    [-22,27,10,8,9],[20,27,11,10,9],[-22,13,10,11,9],[20,13,11,7,9],
+    [-22,-2,11,8,10],[22,-3,10,11,10],[-20,-18,11,9,9],[20,-19,11,8,9],
+    [-21,-32,9,7,7],[21,-33,9,10,7]
+  ].forEach(([dx,z,w,h,d],i)=>makeSketchBox({x:STORY_TWO_X+dx,y:h/2,z,w,h,d,shade:i%2===0,rotationY:(i%3-1)*.025}));
+
+  // Intake gate and archive terminal.
+  makeSketchBox({x:STORY_TWO_X-8,y:1.35,z:20,w:.7,h:2.7,d:7,shade:true});
+  makeSketchBox({x:STORY_TWO_X+8,y:1.35,z:20,w:.7,h:2.7,d:7,shade:true});
+  makeSketchBox({x:STORY_TWO_X,y:2.55,z:20,w:15.5,h:.42,d:.55,shade:true});
+  makeSketchBox({x:STORY_TWO_ARCHIVE.x,y:.82,z:STORY_TWO_ARCHIVE.z,w:1.8,h:1.64,d:1.4,shade:true});
+  makeLabel('ARCHIVE TERMINAL',new THREE.Vector3(STORY_TWO_ARCHIVE.x,2.55,STORY_TWO_ARCHIVE.z),0,.42);
+
+  // Ink press defense room, with low cover that keeps the player moving.
+  makeSketchBox({x:STORY_TWO_PRESS.x,y:.65,z:STORY_TWO_PRESS.z,w:2.2,h:1.3,d:2.2,shade:true});
+  [[-8,-1],[8,-1],[-7,-9],[7,-9]].forEach(([dx,z],i)=>makeSketchBox({x:STORY_TWO_X+dx,y:.55,z,w:3.5,h:1.1,d:1.5,shade:i%2===0,rotationY:(i%2?-.1:.1)}));
+  makeLabel('INK PRESS // HOLD',new THREE.Vector3(STORY_TWO_X,2.6,-4),0,.5);
+
+  // Narrow correction corridor. Eraser cover objects already provide the "page deleting cover" idea in Arena;
+  // these static fins make the story chase visually different.
+  for(let i=0;i<5;i++){
+    makeSketchBox({x:STORY_TWO_X+(i%2?7:-7),y:1.45,z:-14-i*3.2,w:1.0,h:2.9,d:4.0,shade:i%2===0});
+  }
+  makeLabel('CORRECTION ARCHIVE',new THREE.Vector3(STORY_TWO_X,4.5,31),0,.82);
+  makeLabel('ONLY FINISHED LINES MAY PASS',new THREE.Vector3(STORY_TWO_X,3.0,17),0,.43);
+  makeLabel('UNAUTHORIZED DRAFT → ERASE',new THREE.Vector3(STORY_TWO_X-3,3.0,-13),0,.40);
+  makeLabel('PROOFREADER',new THREE.Vector3(STORY_TWO_X,3.2,-31),0,.52);
+}
+
+buildStoryTwoMap();
+createStoryNote(STORY_TWO_X-11, 27, 'ARCHIVE MEMO // INTAKE', 'Every correction begins with classification. Draft. Copy. Borrowed line. The last category has no approved disposal method.',2);
+createStoryNote(STORY_TWO_X+10, 5, 'ARCHIVE LOG // MARA', 'Voiceprint MARA appears in six pages simultaneously. No source body located. Recommendation: treat signal as persistent annotation, not resident.',2);
+createStoryNote(STORY_TWO_X-9, -19, 'ARCHIVE LOG // ARTIST', 'Repair entity continues replacing erased geometry. Hostile designation disputed. The page survives longer when it is active.',2);
 
 // ---------- Living page / dynamic redraw system ----------
 const dynamicStructures = [];
@@ -1174,6 +1247,11 @@ const ENEMY_TYPES = {
     range: 31, accuracyMin: .46, accuracyMax: .68, damageMin: 6, damageMax: 9,
     shotMin: 1350, shotMax: 1850
   },
+  proofreader: {
+    label: 'PROOFREADER', hp: 360, scale: [1.42, 1.38, 1.42], behavior: 'guardian', speed: 1.22,
+    range: 34, accuracyMin: .38, accuracyMax: .60, damageMin: 7, damageMax: 10,
+    shotMin: 920, shotMax: 1260
+  },
   guardian: {
     label: 'PAGE GUARDIAN', hp: 430, scale: [1.55, 1.48, 1.55], behavior: 'guardian', speed: 1.05,
     range: 32, accuracyMin: .35, accuracyMax: .58, damageMin: 7, damageMax: 10,
@@ -1417,7 +1495,7 @@ function playGunSound(id) {
 }
 
 function playEnemyShotSound(type) {
-  const heavy = type === 'heavy' || type === 'artist' || type === 'guardian';
+  const heavy = type === 'heavy' || type === 'artist' || type === 'guardian' || type === 'proofreader';
   playNoiseBurst(heavy ? .034 : .022, heavy ? .09 : .055, heavy ? 900 : 1450);
   playTone(heavy ? 82 : 118, heavy ? 48 : 72, heavy ? .08 : .05, heavy ? .022 : .014, 'square');
 }
@@ -1511,7 +1589,7 @@ function createEnemy(index) {
     type: 'rifleman', config: ENEMY_TYPES.rifleman,
     origin: new THREE.Vector3(), navPosition: new THREE.Vector3(),
     phase: Math.random() * Math.PI * 2, flankSide: index % 2 ? 1 : -1,
-    nextShotAt: 0, availableAt: 0,
+    nextShotAt: 0, availableAt: 0, lastFiredAt: -9999,
     flinch: 0, headFlinch: 0, flinchDir: 1,
     knockbackOffset: new THREE.Vector3(), knockbackVelocity: new THREE.Vector3(),
     deathStart: 0, deathDuration: 680, deathDir: Math.random() < .5 ? -1 : 1,
@@ -1630,6 +1708,7 @@ function configureEnemy(enemy, type, spawnPoint) {
     });
   });
 
+  enemy.lastFiredAt = -9999;
   enemy.nextShotAt = performance.now() + config.shotMin * .72 + Math.random() * (config.shotMax - config.shotMin);
   if (type === 'artist') {
     activeArtist = enemy;
@@ -1661,7 +1740,7 @@ const deathChunks = [];
 
 function spawnDeathChunks(enemy, headshot = false) {
   enemy.group.updateMatrixWorld(true);
-  const isBoss = enemy.type === 'guardian' || enemy.type === 'artist';
+  const isBoss = enemy.type === 'guardian' || enemy.type === 'artist' || enemy.type === 'proofreader';
   const chunksPerPart = isBoss ? 5 : (headshot ? 4 : 3);
   const center = enemy.group.position.clone().add(new THREE.Vector3(0, 1.05, 0));
   const worldPos = new THREE.Vector3();
@@ -1766,13 +1845,13 @@ const deathScribbles = [];
 function spawnDeathScribbles(enemy, headshot = false) {
   const group = new THREE.Group();
   group.position.copy(enemy.group.position).add(new THREE.Vector3(0, 1.05, 0));
-  const lineCount = (enemy.type === 'guardian' || enemy.type === 'artist') ? 58 : (headshot ? 28 : 21);
+  const lineCount = (enemy.type === 'guardian' || enemy.type === 'artist' || enemy.type === 'proofreader') ? 58 : (headshot ? 28 : 21);
 
   for (let i = 0; i < lineCount; i++) {
     const points = [];
     let cursor = new THREE.Vector3(
-      (Math.random() - .5) * ((enemy.type === 'guardian' || enemy.type === 'artist') ? 1.8 : .75),
-      (Math.random() - .5) * ((enemy.type === 'guardian' || enemy.type === 'artist') ? 2.6 : 1.65),
+      (Math.random() - .5) * ((enemy.type === 'guardian' || enemy.type === 'artist' || enemy.type === 'proofreader') ? 1.8 : .75),
+      (Math.random() - .5) * ((enemy.type === 'guardian' || enemy.type === 'artist' || enemy.type === 'proofreader') ? 2.6 : 1.65),
       (Math.random() - .5) * .7
     );
     points.push(cursor.clone());
@@ -1795,7 +1874,7 @@ function spawnDeathScribbles(enemy, headshot = false) {
   deathScribbles.push({
     group,
     born: performance.now(),
-    duration: (enemy.type === 'guardian' || enemy.type === 'artist') ? 1650 : (headshot ? 950 : 820),
+    duration: (enemy.type === 'guardian' || enemy.type === 'artist' || enemy.type === 'proofreader') ? 1650 : (headshot ? 950 : 820),
     drift: new THREE.Vector3((Math.random()-.5)*.45, -.22, (Math.random()-.5)*.45),
     spin: (Math.random()-.5)*1.2
   });
@@ -1907,6 +1986,7 @@ function artistShoot(enemy) {
   const dist = origin.distanceTo(target);
   if (dist > enemy.config.range || !enemyHasLineOfSight(enemy, target)) return;
 
+  enemy.lastFiredAt = performance.now();
   playEnemyShotSound('artist');
   const rays = phase === 1 ? 3 : phase === 2 ? 4 : 6;
   let hitChance = phase === 1 ? .22 : phase === 2 ? .20 : .17;
@@ -1938,7 +2018,7 @@ function damageEnemy(enemy, amount, part, hitPoint, shotDirection) {
   const push = shotDirection.clone();
   push.y = 0;
   if (push.lengthSq() > 0) push.normalize();
-  const mass = enemy.type === 'heavy' || enemy.type === 'guardian' || enemy.type === 'artist' ? .36 : 1;
+  const mass = enemy.type === 'heavy' || enemy.type === 'guardian' || enemy.type === 'artist' || enemy.type === 'proofreader' ? .36 : 1;
   enemy.knockbackVelocity.addScaledVector(push, (headshot ? 4.2 : 2.6) * mass);
 
   if (headshot) {
@@ -2020,6 +2100,7 @@ function enemyShoot(enemy) {
 
   if (cfg.behavior === 'rusher') {
     if (dist <= cfg.range + .35) {
+      enemy.lastFiredAt = performance.now();
       playEnemyShotSound('rusher');
       addTemporaryTracer(origin, target.clone());
       damagePlayer((cfg.damageMin + Math.random() * (cfg.damageMax - cfg.damageMin)) * (1 + (pageNumber - 1) * .06));
@@ -2028,6 +2109,7 @@ function enemyShoot(enemy) {
   }
 
   if (dist > cfg.range || !enemyHasLineOfSight(enemy, target)) return;
+  enemy.lastFiredAt = performance.now();
   playEnemyShotSound(enemy.type);
   addTemporaryTracer(origin, target.clone().add(new THREE.Vector3((Math.random()-.5)*.35, (Math.random()-.5)*.25, (Math.random()-.5)*.35)));
   const distanceFactor = THREE.MathUtils.clamp(1 - dist / Math.max(1, cfg.range * 1.35), 0, 1);
@@ -2302,11 +2384,20 @@ function updateRoundHud() {
   updateInkHud();
   if (gameMode === 'story') {
     const chapterOne = selectedStoryChapter === 1;
-    mapNameEl.textContent = chapterOne ? 'WRONG PAGE' : 'MARGIN DISTRICT';
+    const chapterTwo = selectedStoryChapter === 2;
+    mapNameEl.textContent = chapterTwo ? 'CORRECTION ARCHIVE' : (chapterOne ? 'WRONG PAGE' : 'MARGIN DISTRICT');
     pageLabelEl.textContent = 'CHAPTER';
-    pageCountEl.textContent = chapterOne ? 'ONE' : 'ZERO';
+    pageCountEl.textContent = chapterTwo ? 'TWO' : (chapterOne ? 'ONE' : 'ZERO');
     roundLabelEl.textContent = 'SECTION';
-    if (chapterOne) {
+    if (chapterTwo) {
+      const labels = {
+        waking:'INTAKE', archiveApproach:'INTAKE YARD', archivePatrol:'PATROL', archiveTerminal:'ARCHIVE', defenseApproach:'INK PRESS', defense:'HOLD', corridorRun:'CORRECTION RUN', proofreader:'PROOFREADER', endingDialogue:'EXIT', complete:'COMPLETE'
+      };
+      roundCountEl.textContent = labels[storyState] || 'CORRECTIONS';
+      const inCombat = ['archivePatrol','defense','corridorRun','proofreader'].includes(storyState) && roundState === 'active';
+      targetLabelEl.textContent = storyState === 'defense' ? 'PRESS' : (inCombat ? 'CONTACTS' : 'SIGNAL');
+      targetCountEl.textContent = storyState === 'defense' && storyDefenseEndsAt ? `${Math.max(0, Math.ceil((storyDefenseEndsAt-performance.now())/1000))}s` : (inCombat ? `${storyKills} / ${storyKillsRequired}` : '---');
+    } else if (chapterOne) {
       const labels = {
         waking:'ARRIVAL', introDialogue:'ARRIVAL', wrongPageWalk:'UNFINISHED STREET', firstChoice:'MARA', bridgeApproach:'BROKEN CROSSING', bridgeFight:'CORRECTORS', correction:'CORRECTION ZONE', finalRun:'RUN', endingDialogue:'EXIT', complete:'COMPLETE'
       };
@@ -2331,6 +2422,73 @@ function updateRoundHud() {
   roundCountEl.textContent = `${currentRoundIndex + 1} / ${ROUND_DEFINITIONS.length}`;
   targetLabelEl.textContent = arenaObjective ? 'OBJECTIVE' : 'THREATS';
   targetCountEl.textContent = arenaObjective ? arenaObjective.label : `${roundKills} / ${def.queue.length}`;
+}
+
+// ---------- Subtle directional awareness ----------
+const awarenessArrowPool = [];
+function makeAwarenessArrow() {
+  const el = document.createElement('div');
+  el.className = 'awareness-arrow';
+  el.innerHTML = '<span class="awareness-dot"></span>';
+  awarenessLayerEl?.appendChild(el);
+  awarenessArrowPool.push(el);
+  return el;
+}
+for (let i = 0; i < 4; i++) makeAwarenessArrow();
+
+const awarenessTmp = new THREE.Vector3();
+const awarenessLocal = new THREE.Vector3();
+function positionAwarenessArrow(el, worldPos, kind, recent, distance) {
+  awarenessTmp.copy(worldPos).add(new THREE.Vector3(0, 1.1, 0));
+  awarenessLocal.copy(awarenessTmp).applyMatrix4(camera.matrixWorldInverse);
+  const behind = awarenessLocal.z > 0;
+  const projected = awarenessTmp.clone().project(camera);
+  let x = projected.x, y = projected.y;
+  if (behind) { x = -x; y = -y; }
+  const onScreen = !behind && Math.abs(x) < .78 && Math.abs(y) < .68;
+  if (onScreen && !(recent && kind === 'enemy' && Math.abs(x) > .52)) return false;
+
+  const angle = Math.atan2(-y, x || .0001);
+  const rx = Math.min(innerWidth * .39, 520);
+  const ry = Math.min(innerHeight * .34, 310);
+  const px = innerWidth * .5 + Math.cos(angle) * rx;
+  const py = innerHeight * .5 - Math.sin(angle) * ry;
+  const rotation = angle * 180 / Math.PI + 90;
+  const distanceFade = kind === 'objective' ? .48 : THREE.MathUtils.clamp(1 - distance / 42, .22, .62);
+  el.className = `awareness-arrow visible ${kind}${recent ? ' recent' : ''}`;
+  el.style.left = `${px}px`;
+  el.style.top = `${py}px`;
+  el.style.transform = `translate(-50%, -50%) rotate(${rotation}deg)`;
+  el.style.setProperty('--arrow-opacity', String(recent ? Math.max(.58, distanceFade) : distanceFade));
+  return true;
+}
+
+function updateAwarenessIndicators(now) {
+  awarenessArrowPool.forEach(el => el.className = 'awareness-arrow');
+  if (!awarenessLayerEl || !controls.isLocked || storyDialogueBlocking || upgradeChoosing) return;
+  camera.updateMatrixWorld(true);
+
+  let slot = 0;
+  const objectiveMarker = gameMode === 'story'
+    ? (storyMarker?.visible ? storyMarker : null)
+    : (arenaObjectiveMarker?.visible ? arenaObjectiveMarker : null);
+  if (objectiveMarker && slot < awarenessArrowPool.length) {
+    const d = camera.position.distanceTo(objectiveMarker.position);
+    if (positionAwarenessArrow(awarenessArrowPool[slot], objectiveMarker.position, 'objective', false, d)) slot++;
+  }
+
+  // Awareness is deliberately incomplete: only nearby off-screen threats or enemies
+  // that recently fired reveal themselves. Hunting quiet enemies remains part of play.
+  const threats = enemies
+    .filter(e => e.alive && !e.dying && e.activeInRound && e.group.visible)
+    .map(e => ({ e, d: camera.position.distanceTo(e.group.position), recent: now - e.lastFiredAt < 2800 }))
+    .filter(t => t.recent || t.d < 19)
+    .sort((a,b) => Number(b.recent)-Number(a.recent) || a.d-b.d)
+    .slice(0, 3);
+  for (const threat of threats) {
+    if (slot >= awarenessArrowPool.length) break;
+    if (positionAwarenessArrow(awarenessArrowPool[slot], threat.e.group.position, 'enemy', threat.recent, threat.d)) slot++;
+  }
 }
 
 function resetRunToBoot() {
@@ -2380,7 +2538,10 @@ function resetRunToBoot() {
   storySetpieceStage = 0;
   storyChoiceResolved = false;
   storyFlags = { trustedMara:false, ignoredMara:false, relayTouched:false, answeredUnknown:false };
-  storyCheckpoint.copy(selectedStoryChapter === 1 ? STORY_ONE_SPAWN : STORY_SPAWN);
+  storyCheckpoint.copy(selectedStoryChapter === 2 ? STORY_TWO_SPAWN : (selectedStoryChapter === 1 ? STORY_ONE_SPAWN : STORY_SPAWN));
+  storyDefenseEndsAt = 0;
+  storyDefenseWave = 0;
+  storyRunAmbushSpawned = false;
   storyWakeOverlayEl.classList.remove('visible', 'opening');
   storyDialogueScreenEl.classList.remove('visible');
   document.body.classList.remove('story-dialogue-open');
@@ -2398,7 +2559,7 @@ function resetRunToBoot() {
   roundWarmupUntil = 0;
   roundBannerHideAt = 0;
 
-  if (gameMode === 'story') camera.position.copy(selectedStoryChapter === 1 ? STORY_ONE_SPAWN : STORY_SPAWN);
+  if (gameMode === 'story') camera.position.copy(selectedStoryChapter === 2 ? STORY_TWO_SPAWN : (selectedStoryChapter === 1 ? STORY_ONE_SPAWN : STORY_SPAWN));
   else camera.position.set(0, STAND_EYE_HEIGHT, 16);
   camera.fov = userBaseFov;
   camera.updateProjectionMatrix();
@@ -2623,10 +2784,10 @@ function advanceStoryDialogue() {
 function storySpawnIsSafe(point, radius = .62) {
   if (!point || point.length < 2) return false;
   const [x,z]=point;
-  const cx=selectedStoryChapter===1?STORY_ONE_X:STORY_X;
-  const cz=selectedStoryChapter===1?STORY_ONE_Z:STORY_Z;
-  const sx=selectedStoryChapter===1?STORY_ONE_SIZE_X:STORY_SIZE_X;
-  const sz=selectedStoryChapter===1?STORY_ONE_SIZE_Z:STORY_SIZE_Z;
+  const cx=selectedStoryChapter===2?STORY_TWO_X:(selectedStoryChapter===1?STORY_ONE_X:STORY_X);
+  const cz=selectedStoryChapter===2?STORY_TWO_Z:(selectedStoryChapter===1?STORY_ONE_Z:STORY_Z);
+  const sx=selectedStoryChapter===2?STORY_TWO_SIZE_X:(selectedStoryChapter===1?STORY_ONE_SIZE_X:STORY_SIZE_X);
+  const sz=selectedStoryChapter===2?STORY_TWO_SIZE_Z:(selectedStoryChapter===1?STORY_ONE_SIZE_Z:STORY_SIZE_Z);
   const hx=sx/2-1.4, hz=sz/2-1.4;
   if(x<cx-hx||x>cx+hx||z<cz-hz||z>cz+hz) return false;
   return enemyCanMoveAt(x,z,radius);
@@ -2645,7 +2806,7 @@ function findSafeStorySpawn(preferred, occupied = []) {
   }
 
   // Hand-authored fallback positions in the open central street.
-  const storyCx = selectedStoryChapter === 1 ? STORY_ONE_X : STORY_X;
+  const storyCx = selectedStoryChapter === 2 ? STORY_TWO_X : (selectedStoryChapter === 1 ? STORY_ONE_X : STORY_X);
   candidates.push(
     [storyCx - 4.5, -13.8], [storyCx + 3.8, -14.4],
     [storyCx - 1.8, -19.6], [storyCx + 3.0, -21.0],
@@ -2658,7 +2819,7 @@ function findSafeStorySpawn(preferred, occupied = []) {
     // Don't place an enemy directly on top of the player during a scripted ambush.
     if (Math.hypot(camera.position.x - candidate[0], camera.position.z - candidate[1]) < 4.0) return false;
     return true;
-  }) || [(selectedStoryChapter === 1 ? STORY_ONE_X : STORY_X), -18 - occupied.length * 2.5];
+  }) || [(selectedStoryChapter === 2 ? STORY_TWO_X : (selectedStoryChapter === 1 ? STORY_ONE_X : STORY_X)), -18 - occupied.length * 2.5];
 }
 
 function activeStoryContactCount() {
@@ -2698,6 +2859,29 @@ function spawnStoryContacts(types = ['rifleman', 'rifleman'], points = null) {
   roundState = 'active';
   playerInvulnerableUntil = Math.max(playerInvulnerableUntil, performance.now() + 950);
   updateRoundHud();
+}
+
+function addStoryContacts(types = ['corrector'], points = []) {
+  const liveCount = enemies.filter(e => e.activeInRound && (e.alive || e.dying)).length;
+  const room = Math.max(0, 3 - liveCount);
+  if (room <= 0) return 0;
+  const available = enemies.filter(e => !e.activeInRound && !e.alive && !e.dying);
+  const occupied = enemies.filter(e => e.activeInRound).map(e => [e.group.position.x, e.group.position.z]);
+  let added = 0;
+  types.slice(0, room).forEach((type, i) => {
+    const enemy = available[added];
+    if (!enemy) return;
+    const preferred = points[i] || [camera.position.x + (i%2?6:-6), camera.position.z - 8 - i*2];
+    const safeSpawn = findSafeStorySpawn(preferred, occupied);
+    occupied.push(safeSpawn);
+    configureEnemy(enemy, type, safeSpawn);
+    enemy.storyEncounterId = activeStoryEncounterId;
+    enemy.nextShotAt = Math.max(enemy.nextShotAt, performance.now() + 850 + i * 120);
+    added++;
+  });
+  storyKillsRequired += added;
+  updateRoundHud();
+  return added;
 }
 
 function startStoryChapterZero() {
@@ -2862,12 +3046,17 @@ function updateStoryChapterZero(now, dt) {
     }
   } else if (storyState === 'complete' && storyCompletionAt && now >= storyCompletionAt) {
     storyCompletionAt = 0;
-    gameStarted = false;
-    document.body.classList.add('front-menu');
-    document.body.classList.remove('story-mode');
-    controls.unlock();
-    showMenuPanel('main', false);
+    continueIntoStoryChapter(1);
   }
+}
+
+function continueIntoStoryChapter(nextChapter) {
+  selectedStoryChapter = nextChapter;
+  resetRunToBoot();
+  gameStarted = true;
+  document.body.classList.remove('front-menu');
+  document.body.classList.add('story-mode');
+  startStoryMode();
 }
 
 function setStoryCheckpoint(position, note = 'CHECKPOINT') {
@@ -2976,26 +3165,194 @@ function updateStoryChapterOne(now,dt) {
       ],()=>{saveStoryProgress(2);storyState='complete';storyCompletionAt=performance.now()+2400;storyObjectiveTextEl.textContent='CHAPTER ONE COMPLETE';showRoundBanner('STORY MODE','CHAPTER ONE COMPLETE','WRONG PAGE // END',2300);updateRoundHud();});
     }
   } else if(storyState==='complete'&&storyCompletionAt&&now>=storyCompletionAt){
+    storyCompletionAt=0;
+    continueIntoStoryChapter(2);
+  }
+}
+
+function startStoryChapterTwo() {
+  enemies.forEach(deactivateEnemy);
+  clearDynamicStructures();
+  bossHudEl.classList.remove('visible');
+  roundBannerEl.classList.remove('visible');
+  storyState='waking';
+  storyStage=0; storyKills=0; storyKillsRequired=0; storyCompletionAt=0; roundState='story';
+  storyDefenseEndsAt=0; storyDefenseWave=0; storyRunAmbushSpawned=false;
+  camera.position.copy(STORY_TWO_SPAWN); storyCheckpoint.copy(STORY_TWO_SPAWN);
+  verticalOffset=0; currentEyeHeight=STAND_EYE_HEIGHT; velocity.set(0,0,0);
+  playerHealth=playerMaxHealth; stamina=100; playerInvulnerableUntil=performance.now()+4200;
+  setStoryMarker(STORY_TWO_GATE,false); storyHudEl.classList.add('visible'); storyObjectiveTextEl.textContent='WAKE UP';
+  storyWakeStartedAt=performance.now(); storyWakeOpening=false; storyInputLocked=true; controls.pointerSpeed=0;
+  storyWakeOverlayEl.querySelector('.wake-note span').textContent='CHAPTER TWO';
+  storyWakeOverlayEl.querySelector('.wake-note b').textContent='CORRECTIONS';
+  storyWakeOverlayEl.querySelector('.wake-note small').textContent='ARCHIVE INDEX // UNAUTHORIZED...';
+  storyWakeOverlayEl.classList.remove('opening'); storyWakeOverlayEl.classList.add('visible');
+  updateHealthHud(); updateRoundHud();
+}
+
+function updateStoryChapterTwo(now,dt) {
+  if(gameMode!=='story'||selectedStoryChapter!==2||!controls.isLocked||storyState==='boot') return;
+  if(storyMarker?.visible){storyMarker.rotation.y+=dt*.72;const pulse=1+Math.sin(now*.004)*.06;storyMarker.scale.set(pulse,1,pulse);}
+
+  if(storyState==='waking'){
+    const elapsed=now-storyWakeStartedAt;
+    if(!storyWakeOpening&&elapsed>500){storyWakeOpening=true;storyWakeOverlayEl.classList.add('opening');playNoiseBurst(.014,.46,1280);}
+    if(elapsed>3000){
+      storyState='introDialogue'; storyWakeOverlayEl.classList.remove('visible','opening');
+      showStoryDialogueSequence([
+        {kicker:'CHAPTER TWO // CORRECTIONS',speaker:'MARA',text:'That name on the walls was not a warning. It is a place. You are standing in the intake yard of the Correction Archive.'},
+        {speaker:'YOU',text:'An archive for what?'},
+        {speaker:'MARA',text:'For deciding what belongs on a page. Drafts get stored. Copies get erased. Borrowed lines... apparently get hunted.'},
+        {speaker:'UNKNOWN',text:'Ask her how she knows the filing system.'},
+        {speaker:'MARA',text:'There is an intake gate ahead. Move slowly. This place was built to notice mistakes.'}
+      ],()=>{storyState='archiveApproach';storyObjectiveTextEl.textContent='REACH THE ARCHIVE INTAKE';setStoryMarker(STORY_TWO_GATE,true);showStoryDialogue('MARA // RADIO','Intake gate ahead.','REACH THE ARCHIVE INTAKE');});
+    }
+    return;
+  }
+  if(storyDialogueBlocking) return;
+
+  if(storyState==='archiveApproach'){
+    if(Math.hypot(camera.position.x-STORY_TWO_GATE.x,camera.position.z-STORY_TWO_GATE.z)<2.4){
+      setStoryMarker(STORY_TWO_GATE,false); setStoryCheckpoint(new THREE.Vector3(STORY_TWO_GATE.x,STAND_EYE_HEIGHT,STORY_TWO_GATE.z),'ARCHIVE INTAKE');
+      showStoryDialogueSequence([
+        {kicker:'ARCHIVE // INTAKE',speaker:'MARA',text:'Three outlines just woke up inside the yard. Correctors. They are spreading instead of charging you.'},
+        {speaker:'MARA',text:'Watch the sides. They are trying to classify you before they erase you.'}
+      ],()=>{storyState='archivePatrol';storyObjectiveTextEl.textContent='CLEAR THE INTAKE PATROL';spawnStoryContacts(['corrector','flanker','corrector'],[[STORY_TWO_X-6,17],[STORY_TWO_X+6,15],[STORY_TWO_X,11]]);playRoundStinger('round');});
+    }
+  } else if(storyState==='archivePatrol'){
+    if(storyKills>=storyKillsRequired&&activeStoryContactCount()===0){
+      roundState='story'; storyState='archiveTerminal'; setStoryCheckpoint(new THREE.Vector3(STORY_TWO_X,STAND_EYE_HEIGHT,14),'INTAKE CLEARED');
+      setStoryMarker(STORY_TWO_ARCHIVE,true);
+      showStoryDialogueSequence([
+        {kicker:'INTAKE // QUIET',speaker:'YOU',text:'They were not guarding the gate. They were waiting for me.'},
+        {speaker:'MARA',text:'Then we stop letting the Archive ask the questions. There is a terminal ahead. Read its index.'}
+      ],()=>{storyObjectiveTextEl.textContent='REACH THE ARCHIVE TERMINAL';});
+    }
+  } else if(storyState==='archiveTerminal'){
+    if(Math.hypot(camera.position.x-STORY_TWO_ARCHIVE.x,camera.position.z-STORY_TWO_ARCHIVE.z)<2.15){
+      setStoryMarker(STORY_TWO_ARCHIVE,false);
+      showStoryDialogueSequence([
+        {kicker:'ARCHIVE TERMINAL // CLASSIFICATION',speaker:'SYSTEM',text:'UNAUTHORIZED LINE DETECTED. CATEGORY: BORROWED. ORIGIN: REDACTED. OWNER: UNRESOLVED.'},
+        {speaker:'YOU',text:'Owner?'},
+        {speaker:'UNKNOWN',text:'Every line came from a hand.'},
+        {speaker:'MARA',text:'There is another entry. My name.'},
+        {kicker:'ARCHIVE TERMINAL // MARA',speaker:'SYSTEM',text:'VOICEPRINT MARA // SIX SIMULTANEOUS PAGES // SOURCE BODY: NOT FOUND.',choices:[
+          {label:'ASK MARA DIRECTLY // what are you?',onChoose:()=>{storyFlags.answeredUnknown=true;}},
+          {label:'KEEP READING // do not give the signal a reaction',onChoose:()=>{storyFlags.trustedMara=true;}}
+        ]},
+        {speaker:'MARA',text:'I know what that looks like. I also know I have kept you alive. Both things can be true.'},
+        {speaker:'MARA',text:'The Archive is powering an ink press below us. Shut it down and the correction network loses this district.'}
+      ],()=>{storyState='defenseApproach';storyObjectiveTextEl.textContent='REACH THE INK PRESS';setStoryMarker(STORY_TWO_PRESS,true);});
+    }
+  } else if(storyState==='defenseApproach'){
+    if(Math.hypot(camera.position.x-STORY_TWO_PRESS.x,camera.position.z-STORY_TWO_PRESS.z)<2.3){
+      setStoryMarker(STORY_TWO_PRESS,false); setStoryCheckpoint(new THREE.Vector3(STORY_TWO_X,STAND_EYE_HEIGHT,0),'INK PRESS');
+      storyState='defense'; storyDefenseEndsAt=now+52000; storyDefenseWave=0;
+      spawnStoryContacts(['corrector','rusher'],[[STORY_TWO_X-8,-7],[STORY_TWO_X+8,-8]]);
+      storyKillsRequired=2; roundState='active';
+      showRoundBanner('CHAPTER TWO','INK PRESS // 52 SECONDS','HOLD THE ROOM // THE ARCHIVE IS REDRAWING',2300);
+      showCombatMessage('PRESS SHUTDOWN // HOLD',900);
+    }
+  } else if(storyState==='defense'){
+    const remaining=storyDefenseEndsAt-now;
+    const elapsed=52000-Math.max(0,remaining);
+    const waveTarget=elapsed>39000?4:elapsed>27000?3:elapsed>15000?2:elapsed>7000?1:0;
+    if(waveTarget>storyDefenseWave){
+      storyDefenseWave=waveTarget;
+      if(storyDefenseWave===1) addStoryContacts(['corrector'],[[STORY_TWO_X-7,-11]]);
+      else if(storyDefenseWave===2) addStoryContacts(['flanker','corrector'],[[STORY_TWO_X+8,-12],[STORY_TWO_X-6,-14]]);
+      else if(storyDefenseWave===3) addStoryContacts(['heavy'],[[STORY_TWO_X+7,-15]]);
+      else addStoryContacts(['rusher','corrector'],[[STORY_TWO_X-5,-16],[STORY_TWO_X+5,-17]]);
+      showCombatMessage(`CORRECTION WAVE ${storyDefenseWave+1} // DRAWN IN`,600);
+    }
+    updateRoundHud();
+    if(remaining<=0){
+      storyDefenseEndsAt=0;
+      if(activeStoryContactCount()===0){
+        roundState='story'; storyState='corridorRun'; playerHealth=Math.min(playerMaxHealth,playerHealth+30); updateHealthHud();
+        setStoryMarker(STORY_TWO_SAFE,true);
+        showStoryDialogueSequence([
+          {kicker:'INK PRESS // OFFLINE',speaker:'MARA',text:'Press is dead. The whole archive just lost its clean edges.'},
+          {speaker:'UNKNOWN',text:'And now it will correct by hand.'},
+          {speaker:'MARA',text:'Safe room at the far end. Run. Do not stop for every contact.'}
+        ],()=>{storyObjectiveTextEl.textContent='RUN THE CORRECTION CORRIDOR';});
+      } else {
+        storyObjectiveTextEl.textContent='FINISH THE REMAINING CORRECTORS';
+      }
+    }
+    if(storyDefenseEndsAt===0&&activeStoryContactCount()===0&&storyState==='defense'){
+      roundState='story';storyState='corridorRun';setStoryMarker(STORY_TWO_SAFE,true);storyObjectiveTextEl.textContent='RUN THE CORRECTION CORRIDOR';
+    }
+  } else if(storyState==='corridorRun'){
+    // The archive redraws behind the player. These slabs are intentionally behind the route, not cheap blockers in front.
+    if(!storyRunAmbushSpawned && camera.position.z < -12){
+      storyRunAmbushSpawned=true; dynamicDrawStartedAt=now;
+      for(let i=0;i<3;i++) dynamicBox({x:STORY_TWO_X+(i-1)*4.2,y:1.7,z:-9-i*2.6,w:3.6,h:3.4,d:.48,shade:false});
+      spawnStoryContacts(['flanker','corrector'],[[STORY_TWO_X+7,-20],[STORY_TWO_X-7,-22]]);
+      storyState='corridorRun'; roundState='active'; storyObjectiveTextEl.textContent='REACH THE SAFE ROOM // CONTACTS OPTIONAL';
+      showCombatMessage('THE ARCHIVE IS CLOSING BEHIND YOU',850);
+    }
+    if(Math.hypot(camera.position.x-STORY_TWO_SAFE.x,camera.position.z-STORY_TWO_SAFE.z)<2.4){
+      enemies.forEach(e=>{if(e.storyEncounterId===activeStoryEncounterId) deactivateEnemy(e);});
+      roundState='story'; setStoryMarker(STORY_TWO_SAFE,false); setStoryCheckpoint(new THREE.Vector3(STORY_TWO_SAFE.x,STAND_EYE_HEIGHT,STORY_TWO_SAFE.z),'SAFE ROOM');
+      storyState='proofreader';
+      showStoryDialogueSequence([
+        {kicker:'SAFE ROOM // ARCHIVE HEART',speaker:'YOU',text:'Door is sealed.'},
+        {speaker:'MARA',text:'Not sealed. Waiting.'},
+        {speaker:'SYSTEM',text:'BORROWED LINE CONFIRMED. MANUAL REVIEW AUTHORIZED.'},
+        {speaker:'UNKNOWN',text:'Proofreader.'},
+        {speaker:'MARA',text:'One contact. Big one. Break it before it finishes the review.'}
+      ],()=>{storyObjectiveTextEl.textContent='ERASE THE PROOFREADER';spawnStoryContacts(['proofreader'],[[STORY_TWO_X,-31]]);roundState='active';showRoundBanner('CHAPTER TWO','PROOFREADER','MANUAL CORRECTION // DENIED',2200);});
+    }
+  } else if(storyState==='proofreader'){
+    if(storyKills>=storyKillsRequired&&activeStoryContactCount()===0){
+      roundState='story'; setStoryMarker(STORY_TWO_EXIT,true); storyState='endingDialogue';
+      showStoryDialogueSequence([
+        {kicker:'PROOFREADER // BROKEN',speaker:'SYSTEM',text:'MANUAL REVIEW FAILED. LINE STATUS: UNRESOLVED.'},
+        {speaker:'MARA',text:'There is your answer. The Archive cannot classify you because you were not copied from this page.'},
+        {speaker:'YOU',text:'And you? Six pages. No body.'},
+        {speaker:'MARA',text:storyFlags.answeredUnknown?'I am still Mara. I just do not know whether the first Mara is the one speaking anymore.':'I was hoping you would wait longer to ask that.'},
+        {speaker:'UNKNOWN',text:'She is a note that learned to answer back.'},
+        {speaker:'MARA',text:'Maybe. But notes can still point toward exits. Yours is ahead.'}
+      ],()=>{storyObjectiveTextEl.textContent='LEAVE THE CORRECTION ARCHIVE';});
+    }
+  } else if(storyState==='endingDialogue'){
+    if(Math.hypot(camera.position.x-STORY_TWO_EXIT.x,camera.position.z-STORY_TWO_EXIT.z)<2.35){
+      setStoryMarker(STORY_TWO_EXIT,false); playRoundStinger('complete');
+      showStoryDialogueSequence([
+        {kicker:'CHAPTER TWO // EXIT',speaker:'MARA',text:'The next page is not an archive. It is a workshop.'},
+        {speaker:'YOU',text:'The Artist.'},
+        {speaker:'MARA',text:'Maybe. The repair logs were right about one thing: every time something erased the world, it drew pieces back.'},
+        {speaker:'UNKNOWN',text:'You have been shooting the repair crew.'},
+        {kicker:'CHAPTER TWO // COMPLETE',speaker:'MARA',text:'Then we find out what broke the page in the first place.'}
+      ],()=>{saveStoryProgress(3);storyState='complete';storyCompletionAt=performance.now()+2600;storyObjectiveTextEl.textContent='CHAPTER TWO COMPLETE';showRoundBanner('STORY MODE','CHAPTER TWO COMPLETE','CORRECTIONS // END',2400);updateRoundHud();});
+    }
+  } else if(storyState==='complete'&&storyCompletionAt&&now>=storyCompletionAt){
     storyCompletionAt=0;gameStarted=false;document.body.classList.add('front-menu');document.body.classList.remove('story-mode');controls.unlock();showMenuPanel('main',false);
   }
 }
 
 function startStoryMode() {
-  if(selectedStoryChapter===1) startStoryChapterOne(); else startStoryChapterZero();
+  if(selectedStoryChapter===2) startStoryChapterTwo();
+  else if(selectedStoryChapter===1) startStoryChapterOne();
+  else startStoryChapterZero();
 }
 
 function updateStoryMode(now,dt) {
-  if(selectedStoryChapter===1) updateStoryChapterOne(now,dt); else updateStoryChapterZero(now,dt);
+  if(selectedStoryChapter===2) updateStoryChapterTwo(now,dt);
+  else if(selectedStoryChapter===1) updateStoryChapterOne(now,dt);
+  else updateStoryChapterZero(now,dt);
 }
 
 function combatIsActive() {
-  return controls.isLocked && ((gameMode === 'arena' && roundState === 'active') || (gameMode === 'story' && ['combatOne','combatTwo','bridgeFight','correction'].includes(storyState) && roundState === 'active'));
+  const storyCombatStates = ['combatOne','combatTwo','bridgeFight','correction','archivePatrol','defense','corridorRun','proofreader'];
+  return controls.isLocked && ((gameMode === 'arena' && roundState === 'active') || (gameMode === 'story' && storyCombatStates.includes(storyState) && roundState === 'active'));
 }
 
 function getEnemySquadContext() {
   const active=enemies.filter(e=>e.alive&&!e.dying&&e.activeInRound);
   return {
-    heavy:active.find(e=>e.type==='heavy'||e.type==='guardian'||e.type==='artist')||null,
+    heavy:active.find(e=>e.type==='heavy'||e.type==='guardian'||e.type==='artist'||e.type==='proofreader')||null,
     sniper:active.find(e=>e.type==='sniper')||null,
     rusher:active.find(e=>e.type==='rusher')||null,
     flankers:active.filter(e=>e.type==='flanker')
@@ -3815,6 +4172,24 @@ function currentColliderHeight() {
   return (crouching || sliding) ? CROUCH_COLLIDER_HEIGHT : STAND_COLLIDER_HEIGHT;
 }
 
+// The sniper nest stairs use a dedicated walkable surface instead of stacked AABB
+// colliders. This prevents the player capsule from colliding with the next riser
+// before it has finished stepping onto the current one. The visible boxes remain.
+function sniperStairSurfaceHeight(x, z) {
+  if (gameMode !== 'arena') return null;
+  const towerX = -29;
+  const outerZ = 20.45;
+  const innerZ = 13.05;
+  if (Math.abs(x - towerX) > 1.48 || z > outerZ || z < innerZ) return null;
+  const t = THREE.MathUtils.clamp((outerZ - z) / (outerZ - innerZ), 0, 1);
+  const stepIndex = Math.min(8, Math.floor(t * 9));
+  return .45 * (stepIndex + 1) + SURFACE_EPSILON;
+}
+
+function specialWalkableSurfaceHeight(x, z) {
+  return sniperStairSurfaceHeight(x, z);
+}
+
 function overlapsBoxXZ(x, z, box, radius = PLAYER_RADIUS) {
   return (
     x + radius > box.min.x &&
@@ -3850,6 +4225,8 @@ function findStepHeightAt(x, z, feetY, height = currentColliderHeight()) {
 
 function findLandingSurface(x, z, previousFeetY, nextFeetY, height = currentColliderHeight()) {
   let best = null;
+  const special = specialWalkableSurfaceHeight(x, z);
+  if (special !== null && special <= previousFeetY + .62 && special >= nextFeetY - .08) best = special;
   for (const box of colliders) {
     if (!overlapsBoxXZ(x, z, box, PLAYER_RADIUS * .84)) continue;
     const top = box.max.y;
@@ -4060,6 +4437,12 @@ function updateMovement(dt) {
       if (sliding) slideSpeed *= .48;
       if (dashTimer > 0) dashTimer = 0;
     }
+  }
+
+  const stairSurface = specialWalkableSurfaceHeight(camera.position.x, camera.position.z);
+  if (grounded && stairSurface !== null && stairSurface >= verticalOffset - .08 && stairSurface <= verticalOffset + STEP_HEIGHT + .08) {
+    verticalOffset = stairSurface;
+    velocity.y = Math.min(0, velocity.y);
   }
 
   const previousFeetY = verticalOffset;
@@ -4405,6 +4788,7 @@ function animate(now) {
   updateDynamicStructures(now);
   updateInteractiveEnvironment(now, dt);
   updateStoryNotes();
+  updateAwarenessIndicators(now);
   if (controls.isLocked && triggerHeld) fireTestShot();
   updateEnemies(now, dt);
   updateDeathChunks(now, dt);

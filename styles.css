@@ -1297,3 +1297,57 @@ body:not(.story-mode) #arena-objective.active { opacity: 1; }
   #arena-objective { top:170px; }
 }
 body.scoped #arena-objective { opacity: 0 !important; }
+
+/* ===== Directional awareness cues ===== */
+#awareness-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 24;
+  pointer-events: none;
+  overflow: hidden;
+}
+.awareness-arrow {
+  --arrow-opacity: .45;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 24px;
+  height: 18px;
+  opacity: 0;
+  transform-origin: 50% 50%;
+  transition: opacity .12s linear;
+  filter: drop-shadow(1px 1px 0 rgba(23,77,154,.12));
+}
+.awareness-arrow.visible { opacity: var(--arrow-opacity); }
+.awareness-arrow::before,
+.awareness-arrow::after {
+  content: "";
+  position: absolute;
+  top: 7px;
+  width: 15px;
+  height: 2px;
+  background: var(--ink);
+  border-radius: 40%;
+}
+.awareness-arrow::before { left: 0; transform: rotate(28deg); }
+.awareness-arrow::after { right: 0; transform: rotate(-28deg); }
+.awareness-arrow.enemy.recent::before,
+.awareness-arrow.enemy.recent::after { height: 3px; }
+.awareness-arrow.objective::before,
+.awareness-arrow.objective::after { opacity: .72; }
+.awareness-arrow .awareness-dot {
+  position:absolute;
+  left:10px;
+  top:11px;
+  width:4px;
+  height:4px;
+  border:1px solid var(--ink);
+  border-radius:50%;
+  transform:rotate(-2deg);
+}
+body.scoped #awareness-layer,
+body.story-dialogue-open #awareness-layer,
+body.front-menu #awareness-layer { opacity: 0; }
+
+/* Chapter cards should remain readable as the story grows. */
+.chapter-list { max-height: 48vh; overflow-y: auto; padding-right: 5px; }
