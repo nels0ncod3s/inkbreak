@@ -1,0 +1,17 @@
+{
+  "name": "INKBREAK",
+  "short_name": "INKBREAK",
+  "start_url": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#f2eee2",
+  "theme_color": "#f2eee2",
+  "icons": [
+    {
+      "src": "./favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

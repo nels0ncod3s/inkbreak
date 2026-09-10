@@ -1,6 +1,6 @@
 # INKBREAK — Browser FPS Build
 
-INKBREAK is a desktop-first Three.js FPS rendered like a living notebook drawn in blue ballpoint pen. This build merges the arena roguelite loop, movement systems, weapon progression, enemy reactions, dynamic page geometry, environmental interactions, boss encounter, and three Story chapters.
+INKBREAK is a Three.js FPS rendered like a living notebook drawn in blue ballpoint pen. This build contains the arena roguelite loop, movement systems, weapon progression, enemy reactions, dynamic page geometry, environmental interactions, boss encounter, three Story chapters, and a responsive landscape mobile control layer.
 
 ## Run locally
 
@@ -10,9 +10,9 @@ Serve the folder over HTTP because the game uses ES modules:
 python -m http.server 8000
 ```
 
-Then open `http://localhost:8000` in a desktop browser. The project can also be deployed as a static site to Vercel.
+Then open `http://localhost:8000`. The project can also be deployed as a static site to Vercel.
 
-## Controls
+## Desktop controls
 
 - WASD — move
 - Mouse — look
@@ -27,9 +27,31 @@ Then open `http://localhost:8000` in a desktop browser. The project can also be 
 - E — read Story field notes / interact
 - Esc — pause
 
+## Mobile controls
+
+The mobile build is designed for landscape orientation and uses a reduced, touch-first HUD.
+
+- Left virtual joystick — analogue movement
+- Drag anywhere on the open right side — camera / aim
+- FIRE — hold to fire or repeatedly use the knife
+- AIM — hold for ADS / Ruler scope; quick tap reloads
+- SPRINT — hold while moving
+- CROUCH / SLIDE — hold to crouch; use while sprinting to slide
+- DASH — directional dash based on current joystick direction
+- JUMP — jump / slide-jump
+- WEAPON — cycles through currently unlocked weapons
+- USE — Story notes and interactions
+- II — pause
+
+On supported mobile browsers, entering a match requests fullscreen and attempts to lock the screen to landscape. Mobile browsers do not universally permit a webpage to force rotation, especially iOS Safari, so portrait orientation also shows an INKBREAK-themed `ROTATE THE PAGE` screen until the device is turned sideways. A web-app manifest with `orientation: landscape` is included as an additional hint for installed/home-screen launches.
+
+## Mobile HUD
+
+The landscape HUD intentionally removes desktop-only clutter. Health, stamina and ammunition stay compact in the upper-left, the active objective remains near the top center, and the middle of the screen stays open for aiming. The full desktop weapon rack, coordinates and keyboard hint strip are hidden on touch devices.
+
 ## Directional awareness
 
-The HUD now uses small hand-drawn edge chevrons instead of permanent enemy markers. Objective markers can point from off-screen, while enemy hints appear only for nearby threats or contacts that recently fired. Quiet, distant enemies stay hidden so searching the environment still matters.
+The HUD uses small hand-drawn edge chevrons instead of permanent enemy markers. Objective markers can point from off-screen, while enemy hints appear only for nearby threats or contacts that recently fired. Quiet, distant enemies stay hidden so searching the environment still matters.
 
 ## Arena Mode
 
@@ -39,7 +61,7 @@ Between rounds, the game pauses on a taped notebook sheet and offers three rando
 
 Enemy types cooperate more deliberately: heavies anchor pressure, riflemen support them, flankers take side angles, rushers become more aggressive under sniper cover, and Correctors use cleaner tactical positioning in Story Mode.
 
-The Sketchyard sniper nest now uses a dedicated walkable stair surface. The visible paper steps remain, but the player no longer collides with invisible overlapping stair risers while climbing.
+The Sketchyard sniper nest uses a dedicated walkable stair surface. The visible paper steps remain, while traversal uses a stable stepped height field.
 
 ## Interactive environment
 
@@ -58,7 +80,7 @@ Weapon slot 0 is the Ink Knife. Enemies below 25% health can be executed with a 
 
 ## Story Mode
 
-The current story is structured as three connected chapters with full-screen taped-paper dialogue, checkpoints, environmental notes, exploration, choices, combat encounters, and scripted redraw events. Chapters now flow directly into the next unlocked chapter, so a first playthrough is designed to provide roughly 10–15+ minutes of varied continuous story gameplay rather than a single short combat corridor.
+The current story is structured as three connected chapters with full-screen taped-paper dialogue, checkpoints, environmental notes, exploration, choices, combat encounters, and scripted redraw events. Chapters flow directly into the next unlocked chapter, so a first playthrough is designed to provide roughly 10–15+ minutes of varied continuous story gameplay.
 
 ### Chapter Zero — The Margin
 Wake in Margin District, follow Mara's signal, fight Copies, investigate a relay, hear the unknown voice call you a “borrowed line,” survive the ambush, and escape.
@@ -67,7 +89,7 @@ Wake in Margin District, follow Mara's signal, fight Copies, investigate a relay
 Enter a half-finished city with roads and architecture that fail to resolve. The chapter adds environmental writing, a Mara/relay choice, a bridge-redraw set piece, the cleaner CORRECTOR faction, and evidence that The Artist may have been repairing the page rather than destroying it.
 
 ### Chapter Two — Corrections
-Enter the Correction Archive, clear an intake patrol, inspect records about Borrowed Lines and Mara, defend the Ink Press during a timed multi-wave encounter, outrun the Archive as it redraws behind you, and face the PROOFREADER mini-boss. The chapter pushes the central mystery further: Mara appears on several pages at once, while the Archive cannot identify the player's original owner or page.
+Enter the Correction Archive, clear an intake patrol, inspect records about Borrowed Lines and Mara, defend the Ink Press during a timed multi-wave encounter, outrun the Archive as it redraws behind you, and face the PROOFREADER mini-boss.
 
 Chapter progress is stored in `localStorage`, and the main menu includes Chapter Select. Chapters unlock sequentially.
 
@@ -85,6 +107,6 @@ Every firearm has its own silhouette, ammo pool, recoil profile, fire cadence, A
 
 ## Notes
 
-- Desktop-first. Mobile devices receive an INKBREAK-themed “play on a bigger screen” notice while touch controls are still in development.
+- Desktop and landscape mobile play are supported by the same static build.
 - Three.js is loaded from jsDelivr in the current static build.
 - Audio is generated procedurally through Web Audio, so no external sound files are required.

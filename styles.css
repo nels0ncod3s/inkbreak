@@ -1351,3 +1351,432 @@ body.front-menu #awareness-layer { opacity: 0; }
 
 /* Chapter cards should remain readable as the story grows. */
 .chapter-list { max-height: 48vh; overflow-y: auto; padding-right: 5px; }
+
+/* ========================================================================== */
+/* INKBREAK MOBILE // landscape touch build                                  */
+/* ========================================================================== */
+
+#orientation-gate,
+#mobile-controls { display: none; }
+
+#orientation-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 12000;
+  place-items: center;
+  padding: max(18px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left));
+  color: var(--ink);
+  background:
+    repeating-linear-gradient(0deg, transparent 0 23px, rgba(23,77,154,.08) 24px 25px),
+    repeating-linear-gradient(90deg, transparent 0 23px, rgba(23,77,154,.045) 24px 25px),
+    var(--paper);
+}
+
+.rotate-note { width: min(520px, 92vw); }
+.rotate-phone {
+  float: right;
+  position: relative;
+  width: 66px;
+  height: 42px;
+  margin: 2px 2px 6px 18px;
+  border: 3px solid var(--ink);
+  border-radius: 8px;
+  transform: rotate(-6deg);
+}
+.rotate-phone::before {
+  content: "";
+  position: absolute;
+  left: -16px;
+  top: -16px;
+  width: 42px;
+  height: 42px;
+  border: 2px dashed rgba(23,77,154,.5);
+  border-right-color: transparent;
+  border-bottom-color: transparent;
+  border-radius: 50%;
+  transform: rotate(22deg);
+}
+.rotate-phone::after {
+  content: "↻";
+  position: absolute;
+  left: -24px;
+  top: -29px;
+  font-size: 24px;
+  font-weight: 900;
+}
+.rotate-phone span {
+  position: absolute;
+  right: 5px;
+  top: 50%;
+  width: 3px;
+  height: 11px;
+  background: var(--ink);
+  transform: translateY(-50%);
+  opacity: .55;
+}
+
+#mobile-controls {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  padding:
+    max(8px, env(safe-area-inset-top))
+    max(8px, env(safe-area-inset-right))
+    max(8px, env(safe-area-inset-bottom))
+    max(8px, env(safe-area-inset-left));
+}
+
+#mobile-look-zone {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 62%;
+  height: 100%;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.mobile-utility,
+.touch-pill,
+.touch-action,
+.touch-fire,
+#mobile-joystick {
+  pointer-events: auto;
+  touch-action: none;
+  color: var(--ink);
+  font-family: "Courier New", ui-monospace, monospace;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#mobile-pause {
+  position: absolute;
+  right: max(12px, env(safe-area-inset-right));
+  top: max(10px, env(safe-area-inset-top));
+  z-index: 8;
+  width: 38px;
+  height: 34px;
+  border: 1.5px solid rgba(23,77,154,.72);
+  background: rgba(255,253,245,.56);
+  font-weight: 900;
+  letter-spacing: .08em;
+  transform: rotate(.8deg);
+  box-shadow: 2px 2px 0 rgba(23,77,154,.08);
+}
+
+#mobile-left-controls {
+  position: absolute;
+  left: max(16px, env(safe-area-inset-left));
+  bottom: max(14px, env(safe-area-inset-bottom));
+  width: 168px;
+  height: 174px;
+  z-index: 6;
+}
+
+#mobile-joystick {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 142px;
+  height: 142px;
+  border-radius: 50%;
+  border: 2px solid rgba(23,77,154,.55);
+  background: rgba(255,253,245,.10);
+  box-shadow: inset 0 0 0 5px rgba(23,77,154,.035);
+}
+#mobile-joystick::before,
+#mobile-joystick::after {
+  content: "";
+  position: absolute;
+  background: rgba(23,77,154,.16);
+}
+#mobile-joystick::before { left: 50%; top: 12%; bottom: 12%; width: 1px; }
+#mobile-joystick::after { top: 50%; left: 12%; right: 12%; height: 1px; }
+.joystick-ring {
+  position: absolute;
+  inset: 18px;
+  border: 1px dashed rgba(23,77,154,.28);
+  border-radius: 50%;
+  transform: rotate(8deg);
+}
+#mobile-joystick-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 58px;
+  height: 58px;
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  background:
+    repeating-linear-gradient(-8deg, rgba(23,77,154,.07) 0 1px, transparent 1px 6px),
+    rgba(255,253,245,.62);
+  transform: translate(-50%, -50%);
+  box-shadow: 3px 3px 0 rgba(23,77,154,.10);
+  will-change: transform;
+}
+#mobile-joystick > span {
+  position: absolute;
+  left: 50%;
+  bottom: -2px;
+  transform: translate(-50%, 100%) rotate(-2deg);
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: .16em;
+  opacity: .62;
+}
+
+.touch-pill {
+  position: absolute;
+  left: 92px;
+  top: 0;
+  min-width: 72px;
+  height: 34px;
+  padding: 0 10px;
+  border: 1.5px solid rgba(23,77,154,.75);
+  background: rgba(255,253,245,.48);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .08em;
+  transform: rotate(1deg);
+}
+
+#mobile-action-cluster {
+  position: absolute;
+  right: max(14px, env(safe-area-inset-right));
+  bottom: max(12px, env(safe-area-inset-bottom));
+  width: 286px;
+  height: 190px;
+  z-index: 7;
+  pointer-events: none;
+}
+
+.touch-action,
+.touch-fire {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  border: 1.7px solid rgba(23,77,154,.72);
+  background:
+    repeating-linear-gradient(-9deg, rgba(23,77,154,.035) 0 1px, transparent 1px 7px),
+    rgba(255,253,245,.53);
+  box-shadow: 3px 3px 0 rgba(23,77,154,.09);
+  transform: rotate(var(--touch-rot, 0deg));
+}
+.touch-action {
+  width: 57px;
+  height: 57px;
+  border-radius: 50%;
+}
+.touch-action b { font-size: 19px; line-height: 1; }
+.touch-action span {
+  display: block;
+  font-size: 6.5px;
+  line-height: 1.05;
+  font-weight: 900;
+  letter-spacing: .04em;
+}
+.touch-action.pressed,
+.touch-pill.pressed,
+.touch-fire.pressed {
+  background: rgba(23,77,154,.82);
+  color: var(--paper-bright);
+  transform: rotate(var(--touch-rot, 0deg)) scale(.94);
+}
+.touch-small { width: 45px; height: 45px; }
+.touch-small b { font-size: 13px; }
+
+#mobile-weapon { right: 214px; bottom: 132px; --touch-rot: -2deg; }
+#mobile-use { right: 158px; bottom: 138px; --touch-rot: 1.4deg; }
+#mobile-dash { right: 209px; bottom: 65px; --touch-rot: .8deg; }
+#mobile-jump { right: 142px; bottom: 82px; --touch-rot: -1.2deg; }
+#mobile-crouch { right: 142px; bottom: 14px; --touch-rot: 1.5deg; }
+#mobile-aim { right: 72px; bottom: 105px; width: 64px; height: 64px; --touch-rot: -.8deg; }
+#mobile-aim span { max-width: 46px; }
+
+.touch-fire {
+  right: 0;
+  bottom: 18px;
+  width: 92px;
+  height: 92px;
+  border-radius: 48% 52% 46% 54%;
+  border-width: 2.3px;
+  background:
+    repeating-linear-gradient(12deg, rgba(23,77,154,.10) 0 2px, transparent 2px 7px),
+    rgba(255,253,245,.62);
+  --touch-rot: 2deg;
+}
+.touch-fire::before {
+  content: "";
+  position: absolute;
+  inset: 7px 5px 6px 8px;
+  border: 1px dashed rgba(23,77,154,.55);
+  border-radius: 51% 45% 53% 48%;
+  transform: rotate(-6deg);
+}
+.touch-fire span {
+  position: relative;
+  z-index: 2;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: .08em;
+}
+
+/* Touch controls are only present while a mobile match is actively running. */
+body.touch-device.mobile-playing #mobile-controls { display: block; }
+body.touch-device.mobile-playing { overscroll-behavior: none; }
+body.touch-device.mobile-playing canvas { touch-action: none; }
+
+/* Portrait cannot offer a useful FPS sight picture. We ask for rotation rather
+   than squeezing the controls into a vertical phone-sized postage stamp. */
+@media (hover: none) and (pointer: coarse) and (orientation: portrait) {
+  #orientation-gate { display: grid; }
+  #mobile-controls { display: none !important; }
+}
+
+@media (hover: none) and (pointer: coarse) and (orientation: landscape) {
+  #orientation-gate { display: none !important; }
+
+  /* Main/pause menus stay touchable without overflowing short phone screens. */
+  #menu {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: max(8px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  }
+  .menu-stack { width: min(760px, 92vw); margin: auto; }
+  .sheet.menu-panel {
+    width: min(760px, 92vw);
+    max-height: calc(100dvh - 18px);
+    overflow-y: auto;
+    padding: 30px 34px 24px;
+  }
+  .scribble-title { font-size: clamp(38px, 8vw, 64px); }
+  .sheet .subtitle { margin: 14px 0 17px; font-size: 11px; line-height: 1.45; }
+  .menu-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .menu-actions button { min-height: 42px; }
+  .footnote { margin-top: 14px; }
+  .controls-grid { grid-template-columns: repeat(3, 1fr); gap: 7px; margin-top: 15px; }
+  .settings-list { gap: 9px; }
+  .chapter-list { gap: 8px; }
+  .chapter-card { padding: 10px 12px; }
+
+  /* Breathable mobile HUD: only information that matters mid-fight survives. */
+  #top-left { display: none; }
+  #bottom-right { display: none; }
+  #weapon-rack { display: none; }
+
+  #bottom-left {
+    left: max(10px, env(safe-area-inset-left));
+    top: max(9px, env(safe-area-inset-top));
+    bottom: auto;
+    width: 270px;
+    min-width: 0;
+    transform: scale(.84);
+    transform-origin: top left;
+    z-index: 12;
+  }
+  #bottom-left .hud-row { gap: 6px; }
+  #bottom-left .hud-panel { padding: 6px 7px; background: rgba(255,253,245,.42); }
+  #bottom-left .meter-panel { width: 158px; }
+  #bottom-left .ammo-panel { min-width: 104px; }
+  #bottom-left .meter-label { font-size: 8px; margin-bottom: 4px; }
+  #bottom-left .meter { height: 6px; }
+  #bottom-left .stamina-label { margin-top: 6px; }
+  #bottom-left .ammo-label { font-size: 7px; }
+  #bottom-left .ammo-value { font-size: 18px; }
+  #reload-note { font-size: 6.5px; margin-top: 4px; }
+
+  #arena-objective {
+    top: max(9px, env(safe-area-inset-top));
+    left: 50%;
+    right: auto;
+    width: min(290px, 38vw);
+    transform: translateX(-50%) rotate(-.4deg) scale(.82);
+    transform-origin: top center;
+  }
+  body.story-mode #story-objective {
+    top: max(9px, env(safe-area-inset-top));
+    left: 50%;
+    right: auto;
+    width: min(360px, 43vw);
+    transform: translateX(-50%) rotate(-.3deg) scale(.82);
+    transform-origin: top center;
+  }
+  body.story-mode #story-dialogue { display: none; }
+
+  #round-banner {
+    top: 60px;
+    max-width: 330px;
+    transform: translateX(-50%) scale(.78) rotate(-.5deg);
+  }
+  body.story-mode #round-banner { top: 58px; }
+  #boss-hud {
+    top: max(8px, env(safe-area-inset-top));
+    width: min(360px, 42vw);
+    transform: translateX(-50%) scale(.82);
+    transform-origin: top center;
+  }
+  #combat-message { bottom: 25%; font-size: 10px; }
+  #crosshair { transform: translate(-50%, -50%) scale(.82) rotate(-1deg); }
+
+  /* Menus/dialogue/upgrades are touch-first and scroll within the short axis. */
+  #story-dialogue-screen { padding: 10px 18px; }
+  #story-dialogue-screen.visible { pointer-events: auto; }
+  .story-dialogue-sheet {
+    width: min(760px, 90vw);
+    min-height: 0;
+    max-height: calc(100dvh - 22px);
+    overflow-y: auto;
+    padding: 30px 38px 26px;
+  }
+  .story-dialogue-sheet h2 { margin: 0 0 10px; font-size: clamp(29px, 6vw, 46px); }
+  #story-screen-text { min-height: 58px; font-size: clamp(14px, 2.4vw, 18px); line-height: 1.4; }
+  .story-dialogue-continue { margin-top: 12px; padding: 10px 12px; font-size: 9px; }
+  .story-choice { cursor: pointer; min-height: 38px; }
+
+  #upgrade-screen { padding: 10px; }
+  .upgrade-sheet {
+    width: min(850px, 94vw);
+    max-height: calc(100dvh - 20px);
+    overflow-y: auto;
+    padding: 27px 30px 22px;
+  }
+  #upgrade-cards { gap: 8px; }
+  .upgrade-card { min-height: 102px; padding: 11px; }
+}
+
+/* Very short landscape phones need controls slightly tighter, while preserving
+   enough empty middle-screen space to actually see what is shooting you. */
+@media (hover: none) and (pointer: coarse) and (orientation: landscape) and (max-height: 430px) {
+  #mobile-left-controls { transform: scale(.84); transform-origin: bottom left; }
+  #mobile-action-cluster { transform: scale(.84); transform-origin: bottom right; }
+  #bottom-left { transform: scale(.73); }
+  #mobile-pause { transform: scale(.88) rotate(.8deg); transform-origin: top right; }
+  #round-banner { top: 50px; transform: translateX(-50%) scale(.68) rotate(-.5deg); }
+  #arena-objective { transform: translateX(-50%) rotate(-.4deg) scale(.72); }
+  body.story-mode #story-objective { transform: translateX(-50%) rotate(-.3deg) scale(.72); }
+}
+
+.landscape-request {
+  appearance: none;
+  display: inline-block;
+  padding: 12px 14px 10px;
+  border: 2px solid var(--ink);
+  background: var(--ink);
+  color: var(--paper-bright);
+  font: 900 11px/1 "Courier New", monospace;
+  letter-spacing: .08em;
+  transform: rotate(.5deg);
+  box-shadow: 3px 3px 0 rgba(23,77,154,.12);
+  touch-action: manipulation;
+}
+
+@media (orientation: portrait) {
+  body.touch-device #orientation-gate { display: grid; }
+  body.touch-device #mobile-controls { display: none !important; }
+}
+@media (orientation: landscape) {
+  body.touch-device #orientation-gate { display: none !important; }
+}

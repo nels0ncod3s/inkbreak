@@ -2,9 +2,11 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>INKBREAK // Living Page Build</title>
   <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <meta name="theme-color" content="#f2eee2" />
   <link rel="stylesheet" href="./styles.css" />
   <script type="importmap">
     {
@@ -260,17 +262,42 @@
     </section>
   </div>
 
-  <div id="mobile-gate" aria-live="polite">
-    <section class="mobile-note">
+  <div id="orientation-gate" aria-live="polite">
+    <section class="mobile-note rotate-note">
       <div class="tape tape-a"></div>
       <div class="tape tape-b"></div>
-      <p class="eyebrow">INKBREAK // FIELD NOTICE</p>
-      <h2>THIS PAGE NEEDS A BIGGER DESK.</h2>
-      <p>INKBREAK currently uses mouse-look, keyboard movement and desktop pointer-lock controls.</p>
-      <strong>PLAY ON A LAPTOP OR DESKTOP</strong>
-      <span>MOBILE VERSION // COMING SOON</span>
+      <p class="eyebrow">INKBREAK // MOBILE FIELD NOTICE</p>
+      <div class="rotate-phone" aria-hidden="true"><span></span></div>
+      <h2>ROTATE THE PAGE.</h2>
+      <p>INKBREAK Mobile is designed for landscape play. Turn your phone sideways and the notebook will reopen around you.</p>
+      <button id="mobile-landscape-btn" class="landscape-request">OPEN IN LANDSCAPE</button>
+      <span>TOUCH BUILD // JOYSTICK + AIM CONTROLS</span>
       <div class="mobile-scribble" aria-hidden="true"></div>
     </section>
+  </div>
+
+  <div id="mobile-controls" aria-label="mobile game controls">
+    <button id="mobile-pause" class="mobile-utility" aria-label="Pause">II</button>
+    <div id="mobile-look-zone" aria-label="Drag to aim"></div>
+
+    <div id="mobile-left-controls">
+      <button id="mobile-sprint" class="touch-pill">SPRINT</button>
+      <div id="mobile-joystick" aria-label="Movement joystick">
+        <div class="joystick-ring"></div>
+        <div id="mobile-joystick-knob"></div>
+        <span>MOVE</span>
+      </div>
+    </div>
+
+    <div id="mobile-action-cluster">
+      <button id="mobile-weapon" class="touch-action touch-small"><b>↻</b><span>WEAPON</span></button>
+      <button id="mobile-use" class="touch-action touch-small"><b>E</b><span>USE</span></button>
+      <button id="mobile-dash" class="touch-action"><b>»</b><span>DASH</span></button>
+      <button id="mobile-jump" class="touch-action"><b>↑</b><span>JUMP</span></button>
+      <button id="mobile-crouch" class="touch-action"><b>⌄</b><span>CROUCH / SLIDE</span></button>
+      <button id="mobile-aim" class="touch-action aim-action"><b>◎</b><span>AIM / TAP RELOAD</span></button>
+      <button id="mobile-fire" class="touch-fire"><span>FIRE</span></button>
+    </div>
   </div>
 
   <script type="module" src="./main.js"></script>

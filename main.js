@@ -71,6 +71,115 @@ const awarenessLayerEl = document.querySelector('#awareness-layer');
 const chapterProgressNoteEl = document.querySelector('#chapter-progress-note');
 const chapterCards = [...document.querySelectorAll('.chapter-card')];
 
+
+// ---------- Mobile touch shell ----------
+const IS_TOUCH_DEVICE = window.matchMedia('(hover: none) and (pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+const mobileControlsEl = document.querySelector('#mobile-controls');
+const mobileJoystickEl = document.querySelector('#mobile-joystick');
+const mobileJoystickKnobEl = document.querySelector('#mobile-joystick-knob');
+const mobileLookZoneEl = document.querySelector('#mobile-look-zone');
+const mobileFireBtn = document.querySelector('#mobile-fire');
+const mobileAimBtn = document.querySelector('#mobile-aim');
+const mobileJumpBtn = document.querySelector('#mobile-jump');
+const mobileCrouchBtn = document.querySelector('#mobile-crouch');
+const mobileDashBtn = document.querySelector('#mobile-dash');
+const mobileSprintBtn = document.querySelector('#mobile-sprint');
+const mobileWeaponBtn = document.querySelector('#mobile-weapon');
+const mobileUseBtn = document.querySelector('#mobile-use');
+const mobilePauseBtn = document.querySelector('#mobile-pause');
+const mobileLandscapeBtn = document.querySelector('#mobile-landscape-btn');
+
+document.body.classList.toggle('touch-device', IS_TOUCH_DEVICE);
+if (IS_TOUCH_DEVICE) {
+  // Best-effort orientation request on load. Most browsers intentionally require
+  // a user gesture/fullscreen first, so the rotate sheet remains the reliable fallback.
+  try {
+    const lockAttempt = screen.orientation?.lock?.('landscape');
+    lockAttempt?.catch?.(() => {});
+  } catch {}
+}
+let mobileSessionActive = false;
+let mobileMoveX = 0;
+let mobileMoveY = 0;
+let mobileSprintHeld = false;
+let mobileCrouchHeld = false;
+let mobileJoystickPointer = null;
+let mobileLookPointer = null;
+let mobileLookLastX = 0;
+let mobileLookLastY = 0;
+
+function controlSessionActive() {
+  return controls.isLocked || (IS_TOUCH_DEVICE && mobileSessionActive);
+}
+
+function clearMobileInputs() {
+  mobileMoveX = 0;
+  mobileMoveY = 0;
+  mobileSprintHeld = false;
+  mobileCrouchHeld = false;
+  mobileJoystickPointer = null;
+  mobileLookPointer = null;
+  triggerHeld = false;
+  rightMouseDown = false;
+  isAiming = false;
+  mobileJoystickKnobEl?.style.setProperty('transform', 'translate(-50%, -50%)');
+  mobileSprintBtn?.classList.remove('pressed');
+  mobileCrouchBtn?.classList.remove('pressed');
+  mobileFireBtn?.classList.remove('pressed');
+  mobileAimBtn?.classList.remove('pressed');
+}
+
+async function requestMobileLandscape() {
+  if (!IS_TOUCH_DEVICE) return;
+  try {
+    const root = document.documentElement;
+    if (!document.fullscreenElement) {
+      if (root.requestFullscreen) await root.requestFullscreen({ navigationUI: 'hide' }).catch(() => root.requestFullscreen().catch(() => {}));
+      else if (root.webkitRequestFullscreen) root.webkitRequestFullscreen();
+    }
+  } catch {}
+  try {
+    if (screen.orientation?.lock) await screen.orientation.lock('landscape');
+  } catch {}
+}
+
+function activateControlSession() {
+  if (!IS_TOUCH_DEVICE) {
+    controls.lock();
+    return;
+  }
+  requestMobileLandscape();
+  mobileSessionActive = true;
+  document.body.classList.add('mobile-playing');
+  document.body.classList.remove('front-menu');
+  menu.classList.remove('visible');
+  if (gameMode === 'arena' && typeof roundState !== 'undefined' && roundState === 'boot') startRound(1);
+  if (gameMode === 'story' && typeof storyState !== 'undefined' && storyState === 'boot') startStoryMode();
+}
+
+function pauseMobileGame() {
+  if (!IS_TOUCH_DEVICE || !mobileSessionActive) return;
+  mobileSessionActive = false;
+  clearMobileInputs();
+  document.body.classList.remove('mobile-playing');
+  showMenuPanel(gameStarted ? 'pause' : 'main', false);
+}
+
+function leaveControlSessionForOverlay() {
+  if (IS_TOUCH_DEVICE) {
+    mobileSessionActive = false;
+    clearMobileInputs();
+    document.body.classList.remove('mobile-playing');
+  } else if (controls.isLocked) {
+    controls.unlock();
+  }
+}
+
+function resumeControlSessionAfterOverlay() {
+  if (IS_TOUCH_DEVICE) activateControlSession();
+  else controls.lock();
+}
+
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(PAPER);
 scene.fog = new THREE.Fog(PAPER, 34, 116);
@@ -80,7 +189,7 @@ camera.position.set(0, 1.72, 16);
 scene.add(camera);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
+renderer.setPixelRatio(Math.min(devicePixelRatio, IS_TOUCH_DEVICE ? 1.4 : 1.75));
 renderer.setSize(innerWidth, innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 game.appendChild(renderer.domElement);
@@ -182,7 +291,7 @@ function launchGameMode(mode, chapter = selectedStoryChapter) {
   gameStarted = true;
   document.body.classList.remove('front-menu');
   document.body.classList.toggle('story-mode', gameMode === 'story');
-  controls.lock();
+  activateControlSession();
 }
 
 playBtn.addEventListener('click', () => launchGameMode('arena'));
@@ -194,19 +303,22 @@ chapterCards.forEach(card => card.addEventListener('click', () => {
   launchGameMode('story', chapter);
 }));
 refreshChapterMenu();
-resumeBtn?.addEventListener('click', () => controls.lock());
+resumeBtn?.addEventListener('click', () => activateControlSession());
 restartRunBtn?.addEventListener('click', () => {
   resetRunToBoot();
   gameStarted = true;
   document.body.classList.remove('front-menu');
   document.body.classList.toggle('story-mode', gameMode === 'story');
-  controls.lock();
+  activateControlSession();
 });
 mainMenuBtn?.addEventListener('click', () => {
   resetRunToBoot();
   gameStarted = false;
+  mobileSessionActive = false;
+  clearMobileInputs();
   document.body.classList.add('front-menu');
-  document.body.classList.remove('story-mode');
+  document.body.classList.remove('story-mode', 'mobile-playing');
+  if (!IS_TOUCH_DEVICE && controls.isLocked) controls.unlock();
   showMenuPanel('main', false);
 });
 
@@ -1048,7 +1160,7 @@ function updateInteractiveEnvironment(now, dt) {
   }
 
   // Folded-paper ramps launch the player and preserve forward momentum.
-  if (controls.isLocked && performance.now()-lastRampLaunchAt > 900) {
+  if (controlSessionActive() && performance.now()-lastRampLaunchAt > 900) {
     for (const r of foldRamps) {
       if (gameMode === 'story' && !r.story) continue;
       if (gameMode === 'arena' && r.story) continue;
@@ -1201,7 +1313,7 @@ let reloadStartAt = 0;
 let reloadAmmoCommitted = false;
 
 window.addEventListener('mousemove', (e) => {
-  if (!controls.isLocked) return;
+  if (!controls.isLocked || IS_TOUCH_DEVICE) return;
   weaponSwayX = THREE.MathUtils.clamp(weaponSwayX + e.movementX * .00022, -.022, .022);
   weaponSwayY = THREE.MathUtils.clamp(weaponSwayY + e.movementY * .00018, -.018, .018);
 });
@@ -1979,7 +2091,7 @@ function updateArtistPhase(enemy) {
 }
 
 function artistShoot(enemy) {
-  if (!controls.isLocked || playerHealth <= 0) return;
+  if (!controlSessionActive() || playerHealth <= 0) return;
   const phase = enemy.bossPhase || 1;
   const origin = enemy.group.position.clone().add(new THREE.Vector3(0, 1.9, 0));
   const target = camera.position.clone();
@@ -2088,7 +2200,7 @@ function updateSniperTelegraph(enemy, now, target) {
 }
 
 function enemyShoot(enemy) {
-  if (!controls.isLocked || roundState !== 'active' || playerHealth <= 0) return;
+  if (!controlSessionActive() || roundState !== 'active' || playerHealth <= 0) return;
   if (enemy.type === 'artist') {
     artistShoot(enemy);
     return;
@@ -2362,7 +2474,7 @@ function openUpgradeDraft() {
   }
   upgradeChoosing=true; roundState='upgrade'; triggerHeld=false; rightMouseDown=false; isAiming=false;
   renderUpgradeCards(); upgradeScreenEl.classList.add('visible');
-  if(controls.isLocked) controls.unlock();
+  leaveControlSessionForOverlay();
 }
 
 function chooseUpgrade(index) {
@@ -2373,7 +2485,7 @@ function chooseUpgrade(index) {
   upgradeChoosing=false; upgradeScreenEl.classList.remove('visible');
   showCombatMessage(`${u.name} // DRAWN IN`,900); playMapDrawSound();
   scheduleNextRoundAfterUpgrade();
-  controls.lock();
+  resumeControlSessionAfterOverlay();
 }
 
 function scheduleNextRoundAfterUpgrade() {
@@ -2465,7 +2577,7 @@ function positionAwarenessArrow(el, worldPos, kind, recent, distance) {
 
 function updateAwarenessIndicators(now) {
   awarenessArrowPool.forEach(el => el.className = 'awareness-arrow');
-  if (!awarenessLayerEl || !controls.isLocked || storyDialogueBlocking || upgradeChoosing) return;
+  if (!awarenessLayerEl || !controlSessionActive() || storyDialogueBlocking || upgradeChoosing) return;
   camera.updateMatrixWorld(true);
 
   let slot = 0;
@@ -2665,7 +2777,7 @@ function finishCurrentRound(now) {
 function updateRoundProgression(now) {
   if (roundBannerEl.classList.contains('visible') && now >= roundBannerHideAt) roundBannerEl.classList.remove('visible');
   if (gameMode !== 'arena') return;
-  if (!controls.isLocked && !upgradeChoosing) return;
+  if (!controlSessionActive() && !upgradeChoosing) return;
 
   if (roundState === 'warmup' && now >= roundWarmupUntil) {
     roundState = 'active';
@@ -2780,6 +2892,19 @@ function advanceStoryDialogue() {
   }
   finishStoryDialogueSequence();
 }
+
+
+storyChoiceListEl?.addEventListener('pointerup', (event) => {
+  const choiceEl = event.target.closest('.story-choice');
+  if (!choiceEl || !storyDialogueBlocking) return;
+  const choices = [...storyChoiceListEl.children];
+  const index = choices.indexOf(choiceEl);
+  if (index >= 0) chooseStoryDialogueChoice(index);
+});
+storyDialogueContinueEl?.addEventListener('pointerup', (event) => {
+  event.preventDefault();
+  if (storyDialogueBlocking) advanceStoryDialogue();
+});
 
 function storySpawnIsSafe(point, radius = .62) {
   if (!point || point.length < 2) return false;
@@ -2920,7 +3045,7 @@ function startStoryChapterZero() {
 }
 
 function updateStoryChapterZero(now, dt) {
-  if (gameMode !== 'story' || !controls.isLocked || storyState === 'boot') return;
+  if (gameMode !== 'story' || !controlSessionActive() || storyState === 'boot') return;
 
   if (storyMarker?.visible) {
     storyMarker.rotation.y += dt * .72;
@@ -3083,7 +3208,7 @@ function startStoryChapterOne() {
 }
 
 function updateStoryChapterOne(now,dt) {
-  if(gameMode!=='story'||selectedStoryChapter!==1||!controls.isLocked||storyState==='boot') return;
+  if(gameMode!=='story'||selectedStoryChapter!==1||!controlSessionActive()||storyState==='boot') return;
   if(storyMarker?.visible){storyMarker.rotation.y+=dt*.72;const pulse=1+Math.sin(now*.004)*.06;storyMarker.scale.set(pulse,1,pulse);}
 
   if(storyState==='waking'){
@@ -3191,7 +3316,7 @@ function startStoryChapterTwo() {
 }
 
 function updateStoryChapterTwo(now,dt) {
-  if(gameMode!=='story'||selectedStoryChapter!==2||!controls.isLocked||storyState==='boot') return;
+  if(gameMode!=='story'||selectedStoryChapter!==2||!controlSessionActive()||storyState==='boot') return;
   if(storyMarker?.visible){storyMarker.rotation.y+=dt*.72;const pulse=1+Math.sin(now*.004)*.06;storyMarker.scale.set(pulse,1,pulse);}
 
   if(storyState==='waking'){
@@ -3328,7 +3453,7 @@ function updateStoryChapterTwo(now,dt) {
       ],()=>{saveStoryProgress(3);storyState='complete';storyCompletionAt=performance.now()+2600;storyObjectiveTextEl.textContent='CHAPTER TWO COMPLETE';showRoundBanner('STORY MODE','CHAPTER TWO COMPLETE','CORRECTIONS // END',2400);updateRoundHud();});
     }
   } else if(storyState==='complete'&&storyCompletionAt&&now>=storyCompletionAt){
-    storyCompletionAt=0;gameStarted=false;document.body.classList.add('front-menu');document.body.classList.remove('story-mode');controls.unlock();showMenuPanel('main',false);
+    storyCompletionAt=0;gameStarted=false;document.body.classList.add('front-menu');document.body.classList.remove('story-mode');leaveControlSessionForOverlay();showMenuPanel('main',false);
   }
 }
 
@@ -3346,7 +3471,7 @@ function updateStoryMode(now,dt) {
 
 function combatIsActive() {
   const storyCombatStates = ['combatOne','combatTwo','bridgeFight','correction','archivePatrol','defense','corridorRun','proofreader'];
-  return controls.isLocked && ((gameMode === 'arena' && roundState === 'active') || (gameMode === 'story' && storyCombatStates.includes(storyState) && roundState === 'active'));
+  return controlSessionActive() && ((gameMode === 'arena' && roundState === 'active') || (gameMode === 'story' && storyCombatStates.includes(storyState) && roundState === 'active'));
 }
 
 function getEnemySquadContext() {
@@ -3858,7 +3983,7 @@ function unlockWeapon(id, announce = false) {
 }
 
 function switchWeaponBySlot(slot) {
-  if (!controls.isLocked) return;
+  if (!controlSessionActive()) return;
   const entry = Object.entries(WEAPON_PROFILES).find(([, w]) => w.slot === slot);
   if (!entry) return;
   const [id, profile] = entry;
@@ -3911,7 +4036,7 @@ function updateHealthHud() {
 function startReload() {
   const w = currentWeapon();
   if (w.melee) return;
-  if (!controls.isLocked || isReloading || ammoCurrent === w.magSize || ammoReserve <= 0 || playerHealth <= 0) return;
+  if (!controlSessionActive() || isReloading || ammoCurrent === w.magSize || ammoReserve <= 0 || playerHealth <= 0) return;
   isReloading = true;
   weaponRig.visible = true;
   isAiming = false;
@@ -4165,7 +4290,7 @@ updateHealthHud();
 updateRoundHud();
 
 function wantsCrouchInput() {
-  return !!(keys.ControlLeft || keys.ControlRight || keys.KeyC);
+  return !!(keys.ControlLeft || keys.ControlRight || keys.KeyC || mobileCrouchHeld);
 }
 
 function currentColliderHeight() {
@@ -4252,9 +4377,9 @@ function findCeilingHeight(x, z, previousFeetY, nextFeetY, height = currentColli
 }
 
 function tryStartSlide() {
-  if (!controls.isLocked || !grounded || sliding || dashTimer > 0) return;
+  if (!controlSessionActive() || !grounded || sliding || dashTimer > 0) return;
   const speed = Math.hypot(velocity.x, velocity.z);
-  const sprintIntent = (keys.ShiftLeft || keys.ShiftRight) && keys.KeyW;
+  const sprintIntent = ((keys.ShiftLeft || keys.ShiftRight) && keys.KeyW) || (mobileSprintHeld && mobileMoveY > .28);
   if (!sprintIntent && speed < 6.15) return;
   if (stamina < SLIDE_STAMINA_COST) return;
 
@@ -4275,7 +4400,7 @@ function tryStartSlide() {
 }
 
 function tryDash() {
-  if (!controls.isLocked || playerHealth <= 0 || isReloading) return;
+  if (!controlSessionActive() || playerHealth <= 0 || isReloading) return;
   const now = performance.now();
   if (now < dashReadyAt || stamina < DASH_STAMINA_COST) return;
 
@@ -4284,8 +4409,8 @@ function tryDash() {
   forward.normalize();
   right.crossVectors(forward, camera.up).normalize();
 
-  const ix = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
-  const iz = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
+  const ix = THREE.MathUtils.clamp((keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) + mobileMoveX, -1, 1);
+  const iz = THREE.MathUtils.clamp((keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0) + mobileMoveY, -1, 1);
   dashDirection.set(0, 0, 0);
   dashDirection.addScaledVector(forward, iz || (ix === 0 ? 1 : 0));
   dashDirection.addScaledVector(right, ix);
@@ -4310,7 +4435,7 @@ function tryDash() {
 }
 
 function tryJump() {
-  if (!controls.isLocked || !grounded || dashTimer > 0) return;
+  if (!controlSessionActive() || !grounded || dashTimer > 0) return;
   const wasSliding = sliding;
   sliding = false;
   crouching = false;
@@ -4327,15 +4452,15 @@ function collidesAt(x, z, height = currentColliderHeight()) {
 }
 
 function updateMovement(dt) {
-  if (!controls.isLocked) {
+  if (!controlSessionActive()) {
     velocity.x *= Math.max(0, 1 - FRICTION * dt);
     velocity.z *= Math.max(0, 1 - FRICTION * dt);
     return;
   }
 
   const now = performance.now();
-  const ix = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
-  const iz = (keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0);
+  const ix = THREE.MathUtils.clamp((keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0) + mobileMoveX, -1, 1);
+  const iz = THREE.MathUtils.clamp((keys.KeyW ? 1 : 0) - (keys.KeyS ? 1 : 0) + mobileMoveY, -1, 1);
   const moving = ix !== 0 || iz !== 0;
   const crouchHeld = wantsCrouchInput();
 
@@ -4344,6 +4469,7 @@ function updateMovement(dt) {
   forward.normalize();
   right.crossVectors(forward, camera.up).normalize();
 
+  const inputMagnitude = IS_TOUCH_DEVICE ? Math.min(1, Math.hypot(ix, iz)) : 1;
   wish.set(0, 0, 0);
   wish.addScaledVector(forward, iz);
   wish.addScaledVector(right, ix);
@@ -4354,7 +4480,7 @@ function updateMovement(dt) {
     else if (crouching && canOccupyAt(camera.position.x, camera.position.z, STAND_COLLIDER_HEIGHT)) crouching = false;
   }
 
-  const wantsSprint = keys.ShiftLeft || keys.ShiftRight;
+  const wantsSprint = keys.ShiftLeft || keys.ShiftRight || mobileSprintHeld;
   isSprinting = wantsSprint && iz > 0 && moving && stamina > 1 && grounded && !crouching && !sliding && dashTimer <= 0 && !isAiming;
 
   if (dashTimer > 0) {
@@ -4387,7 +4513,7 @@ function updateMovement(dt) {
   } else {
     const puddleBoost = pointInInkPuddle(camera.position.x,camera.position.z) ? 1.12 : 1;
     const crossoutBoost = now < crossoutSpeedUntil ? 1.18 : 1;
-    const maxSpeed = (crouching ? CROUCH_SPEED : (isSprinting ? SPRINT_SPEED : WALK_SPEED)) * upgradeState.moveMul * puddleBoost * crossoutBoost;
+    const maxSpeed = (crouching ? CROUCH_SPEED : (isSprinting ? SPRINT_SPEED : WALK_SPEED)) * upgradeState.moveMul * puddleBoost * crossoutBoost * inputMagnitude;
     const accel = grounded ? GROUND_ACCEL : AIR_ACCEL;
     const targetX = wish.x * maxSpeed;
     const targetZ = wish.z * maxSpeed;
@@ -4521,7 +4647,7 @@ function updateMovement(dt) {
 
 
 function updateAimState(now) {
-  const canAim = controls.isLocked && playerHealth > 0 && !isReloading && !sliding && dashTimer <= 0 && roundState !== 'boot' && !currentWeapon().melee && !storyInputLocked;
+  const canAim = controlSessionActive() && playerHealth > 0 && !isReloading && !sliding && dashTimer <= 0 && roundState !== 'boot' && !currentWeapon().melee && !storyInputLocked;
   if (rightMouseDown && canAim && now - rightMouseDownAt >= AIM_HOLD_MS) {
     if (!isAiming) {
       isAiming = true;
@@ -4536,6 +4662,176 @@ function updateAimState(now) {
   scopeOverlayEl.classList.toggle('visible', scoped);
 }
 
+
+// ---------- Mobile touch controls ----------
+function updateJoystickFromPointer(event) {
+  const rect = mobileJoystickEl.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+  const maxRadius = Math.min(rect.width, rect.height) * .34;
+  let dx = event.clientX - cx;
+  let dy = event.clientY - cy;
+  const dist = Math.hypot(dx, dy);
+  if (dist > maxRadius) {
+    dx = dx / dist * maxRadius;
+    dy = dy / dist * maxRadius;
+  }
+  mobileMoveX = THREE.MathUtils.clamp(dx / maxRadius, -1, 1);
+  mobileMoveY = THREE.MathUtils.clamp(-dy / maxRadius, -1, 1);
+  const analogMagnitude = Math.hypot(mobileMoveX, mobileMoveY);
+  if (analogMagnitude < .10) { mobileMoveX = 0; mobileMoveY = 0; }
+  mobileJoystickKnobEl.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+}
+
+if (IS_TOUCH_DEVICE) {
+  camera.rotation.order = 'YXZ';
+  const menuFootnote = document.querySelector('#main-menu-panel .footnote');
+  if (menuFootnote) menuFootnote.textContent = 'ARENA: LIVING PAGE · STORY: THE BORROWED LINE · MOBILE TOUCH BUILD';
+  const sensitivityLabel = sensitivitySetting?.closest('.setting-row')?.querySelector('b');
+  if (sensitivityLabel) sensitivityLabel.textContent = 'LOOK SENSITIVITY';
+  const controlNote = document.querySelector('#controls-menu-panel .menu-note');
+  if (controlNote) controlNote.textContent = 'Mobile: left joystick moves, drag the right side to aim, hold FIRE to shoot, hold AIM to focus, tap AIM to reload, and use the action buttons for jump, slide, dash, interact and weapon swap.';
+  const controlCells = [...document.querySelectorAll('#controls-menu-panel .instruction-grid > div')];
+  const touchHelp = [
+    ['LEFT STICK','move'], ['RIGHT SIDE','drag to look'], ['FIRE','hold to shoot'],
+    ['AIM','hold aim · tap reload'], ['SPRINT','hold while moving'], ['CROUCH','hold · sprint to slide'],
+    ['DASH','directional burst'], ['JUMP','jump · slide jump'], ['USE','notes · interact']
+  ];
+  controlCells.forEach((cell, i) => {
+    if (!touchHelp[i]) return;
+    cell.innerHTML = `<b>${touchHelp[i][0]}</b><span>${touchHelp[i][1]}</span>`;
+  });
+  const scopeNote = document.querySelector('.scope-note');
+  const adsNote = document.querySelector('.ads-note');
+  if (scopeNote) scopeNote.textContent = 'RULER OPTIC // HOLD AIM';
+  if (adsNote) adsNote.textContent = 'FOCUS SIGHT // HOLD AIM';
+
+  mobileJoystickEl?.addEventListener('pointerdown', (event) => {
+    if (!mobileSessionActive || storyInputLocked) return;
+    event.preventDefault();
+    mobileJoystickPointer = event.pointerId;
+    mobileJoystickEl.setPointerCapture?.(event.pointerId);
+    updateJoystickFromPointer(event);
+  });
+  mobileJoystickEl?.addEventListener('pointermove', (event) => {
+    if (event.pointerId !== mobileJoystickPointer) return;
+    event.preventDefault();
+    updateJoystickFromPointer(event);
+  });
+  const releaseJoystick = (event) => {
+    if (event.pointerId !== mobileJoystickPointer) return;
+    mobileJoystickPointer = null;
+    mobileMoveX = 0;
+    mobileMoveY = 0;
+    mobileJoystickKnobEl.style.transform = 'translate(-50%, -50%)';
+  };
+  mobileJoystickEl?.addEventListener('pointerup', releaseJoystick);
+  mobileJoystickEl?.addEventListener('pointercancel', releaseJoystick);
+
+  mobileLookZoneEl?.addEventListener('pointerdown', (event) => {
+    if (!mobileSessionActive || storyInputLocked || event.target !== mobileLookZoneEl) return;
+    event.preventDefault();
+    mobileLookPointer = event.pointerId;
+    mobileLookLastX = event.clientX;
+    mobileLookLastY = event.clientY;
+    mobileLookZoneEl.setPointerCapture?.(event.pointerId);
+  });
+  mobileLookZoneEl?.addEventListener('pointermove', (event) => {
+    if (event.pointerId !== mobileLookPointer || !mobileSessionActive || storyInputLocked) return;
+    event.preventDefault();
+    const dx = event.clientX - mobileLookLastX;
+    const dy = event.clientY - mobileLookLastY;
+    mobileLookLastX = event.clientX;
+    mobileLookLastY = event.clientY;
+    const sensitivity = Number(sensitivitySetting?.value || .78);
+    const scale = .00315 * (sensitivity / .78);
+    camera.rotation.y -= dx * scale;
+    camera.rotation.x -= dy * scale;
+    camera.rotation.x = THREE.MathUtils.clamp(camera.rotation.x, -Math.PI / 2 + .15, Math.PI / 2 - .15);
+    weaponSwayX = THREE.MathUtils.clamp(weaponSwayX + dx * .00026, -.022, .022);
+    weaponSwayY = THREE.MathUtils.clamp(weaponSwayY + dy * .00022, -.018, .018);
+  });
+  const releaseLook = (event) => {
+    if (event.pointerId === mobileLookPointer) mobileLookPointer = null;
+  };
+  mobileLookZoneEl?.addEventListener('pointerup', releaseLook);
+  mobileLookZoneEl?.addEventListener('pointercancel', releaseLook);
+
+  const holdButton = (button, onDown, onUp) => {
+    if (!button) return;
+    button.addEventListener('pointerdown', (event) => {
+      if (!mobileSessionActive || storyInputLocked) return;
+      event.preventDefault();
+      event.stopPropagation();
+      button.setPointerCapture?.(event.pointerId);
+      button.classList.add('pressed');
+      onDown?.(event);
+    });
+    const release = (event) => {
+      button.classList.remove('pressed');
+      onUp?.(event);
+    };
+    button.addEventListener('pointerup', release);
+    button.addEventListener('pointercancel', release);
+  };
+
+  holdButton(mobileFireBtn, () => {
+    if (!triggerHeld) triggerHoldStartedAt = performance.now();
+    triggerHeld = true;
+    fireTestShot();
+  }, () => {
+    triggerHeld = false;
+    triggerHoldStartedAt = 0;
+  });
+
+  holdButton(mobileSprintBtn, () => { mobileSprintHeld = true; }, () => { mobileSprintHeld = false; });
+  holdButton(mobileCrouchBtn, () => {
+    mobileCrouchHeld = true;
+    tryStartSlide();
+  }, () => { mobileCrouchHeld = false; });
+
+  holdButton(mobileAimBtn, () => {
+    rightMouseDown = true;
+    rightMouseDownAt = performance.now();
+    rightMouseBecameAim = false;
+  }, () => {
+    const heldFor = performance.now() - rightMouseDownAt;
+    rightMouseDown = false;
+    if (!rightMouseBecameAim && heldFor < AIM_HOLD_MS + 45) startReload();
+    isAiming = false;
+  });
+
+  mobileJumpBtn?.addEventListener('pointerdown', (event) => { event.preventDefault(); event.stopPropagation(); if (mobileSessionActive && !storyInputLocked) tryJump(); });
+  mobileDashBtn?.addEventListener('pointerdown', (event) => { event.preventDefault(); event.stopPropagation(); if (mobileSessionActive && !storyInputLocked) tryDash(); });
+  mobileUseBtn?.addEventListener('pointerdown', (event) => {
+    event.preventDefault(); event.stopPropagation();
+    if (mobileSessionActive && !storyInputLocked && typeof tryReadNearbyStoryNote === 'function') tryReadNearbyStoryNote();
+  });
+  mobileWeaponBtn?.addEventListener('pointerdown', (event) => {
+    event.preventDefault(); event.stopPropagation();
+    if (!mobileSessionActive || storyInputLocked) return;
+    const available = Object.entries(WEAPON_PROFILES)
+      .filter(([id]) => unlockedWeapons.has(id))
+      .sort((a,b) => a[1].slot - b[1].slot);
+    const currentIndex = available.findIndex(([id]) => id === currentWeaponId);
+    const next = available[(currentIndex + 1 + available.length) % available.length];
+    if (next) switchWeaponBySlot(next[1].slot);
+  });
+  mobilePauseBtn?.addEventListener('pointerdown', (event) => { event.preventDefault(); event.stopPropagation(); pauseMobileGame(); });
+
+  mobileLandscapeBtn?.addEventListener('pointerup', (event) => {
+    event.preventDefault();
+    requestMobileLandscape();
+  });
+
+  window.addEventListener('orientationchange', () => setTimeout(() => {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+    if (window.matchMedia('(orientation: portrait)').matches && mobileSessionActive) pauseMobileGame();
+  }, 120));
+}
+
 // ---------- Ink "test fire" feedback ----------
 const raycaster = new THREE.Raycaster();
 const hitDots = [];
@@ -4543,7 +4839,7 @@ const hitDots = [];
 let triggerHeld = false;
 
 window.addEventListener('mousedown', (e) => {
-  if (!controls.isLocked || storyInputLocked) return;
+  if (!controls.isLocked || IS_TOUCH_DEVICE || storyInputLocked) return;
 
   if (e.button === 0) {
     if (!triggerHeld) triggerHoldStartedAt = performance.now();
@@ -4789,7 +5085,7 @@ function animate(now) {
   updateInteractiveEnvironment(now, dt);
   updateStoryNotes();
   updateAwarenessIndicators(now);
-  if (controls.isLocked && triggerHeld) fireTestShot();
+  if (controlSessionActive() && triggerHeld) fireTestShot();
   updateEnemies(now, dt);
   updateDeathChunks(now, dt);
   updateDeathScribbles(now, dt);
@@ -4806,6 +5102,6 @@ requestAnimationFrame(animate);
 window.addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
+  renderer.setPixelRatio(Math.min(devicePixelRatio, IS_TOUCH_DEVICE ? 1.4 : 1.75));
   renderer.setSize(innerWidth, innerHeight);
 });
