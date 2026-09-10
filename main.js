@@ -54,6 +54,20 @@ const storyScreenKickerEl = document.querySelector('#story-screen-kicker');
 const storyScreenSpeakerEl = document.querySelector('#story-screen-speaker');
 const storyScreenTextEl = document.querySelector('#story-screen-text');
 const storyDialogueProgressEl = document.querySelector('#story-dialogue-progress');
+const storyChoiceListEl = document.querySelector('#story-choice-list');
+const storyDialogueContinueEl = document.querySelector('#story-dialogue-continue');
+const inkCountEl = document.querySelector('#ink-count');
+const arenaObjectiveEl = document.querySelector('#arena-objective');
+const arenaObjectiveKickerEl = document.querySelector('#arena-objective-kicker');
+const arenaObjectiveTextEl = document.querySelector('#arena-objective-text');
+const arenaObjectiveProgressEl = document.querySelector('#arena-objective-progress');
+const objectiveFillEl = document.querySelector('#objective-fill');
+const upgradeScreenEl = document.querySelector('#upgrade-screen');
+const upgradeCardsEl = document.querySelector('#upgrade-cards');
+const upgradeInkEl = document.querySelector('#upgrade-ink');
+const chapterOneCardEl = document.querySelector('#chapter-one-card');
+const chapterProgressNoteEl = document.querySelector('#chapter-progress-note');
+const chapterCards = [...document.querySelectorAll('.chapter-card')];
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(PAPER);
@@ -88,6 +102,11 @@ const volumeValue = document.querySelector('#volume-value');
 
 let gameStarted = false;
 let gameMode = 'arena';
+let selectedStoryChapter = 0;
+let storyProgress = (() => {
+  try { return Math.max(0, Number(localStorage.getItem('inkbreak_story_progress') || 0)); }
+  catch { return 0; }
+})();
 let currentMenuPanel = 'main';
 let previousMenuPanel = 'main';
 let userBaseFov = 72;
@@ -128,9 +147,25 @@ volumeSetting?.addEventListener('input', () => {
   setMasterVolume(value);
 });
 
-function launchGameMode(mode) {
+function refreshChapterMenu() {
+  const chapterOneUnlocked = storyProgress >= 1;
+  chapterOneCardEl?.classList.toggle('locked', !chapterOneUnlocked);
+  if (chapterProgressNoteEl) chapterProgressNoteEl.textContent = chapterOneUnlocked
+    ? 'Chapter One unlocked // progress is saved in this browser.'
+    : 'Complete Chapter Zero to unlock Wrong Page.';
+  if (storyBtn) storyBtn.textContent = chapterOneUnlocked ? 'CONTINUE STORY // WRONG PAGE' : 'STORY MODE // THE MARGIN';
+}
+
+function saveStoryProgress(value) {
+  storyProgress = Math.max(storyProgress, value);
+  try { localStorage.setItem('inkbreak_story_progress', String(storyProgress)); } catch {}
+  refreshChapterMenu();
+}
+
+function launchGameMode(mode, chapter = selectedStoryChapter) {
   getAudioContext();
   gameMode = mode;
+  if (mode === 'story') selectedStoryChapter = chapter;
   resetRunToBoot();
   gameStarted = true;
   document.body.classList.remove('front-menu');
@@ -139,7 +174,13 @@ function launchGameMode(mode) {
 }
 
 playBtn.addEventListener('click', () => launchGameMode('arena'));
-storyBtn?.addEventListener('click', () => launchGameMode('story'));
+storyBtn?.addEventListener('click', () => launchGameMode('story', storyProgress >= 1 ? 1 : 0));
+chapterCards.forEach(card => card.addEventListener('click', () => {
+  const chapter = Number(card.dataset.chapter || 0);
+  if (chapter === 1 && storyProgress < 1) return;
+  launchGameMode('story', chapter);
+}));
+refreshChapterMenu();
 resumeBtn?.addEventListener('click', () => controls.lock());
 restartRunBtn?.addEventListener('click', () => {
   resetRunToBoot();
@@ -163,11 +204,32 @@ controls.addEventListener('lock', () => {
   if (gameMode === 'story' && typeof storyState !== 'undefined' && storyState === 'boot') startStoryMode();
 });
 controls.addEventListener('unlock', () => {
+  if (upgradeChoosing) {
+    menu.classList.remove('visible');
+    return;
+  }
   showMenuPanel(gameStarted ? 'pause' : 'main', false);
 });
 
 const keys = Object.create(null);
 window.addEventListener('keydown', (e) => {
+  if (e.code === 'KeyE' && !e.repeat && typeof tryReadNearbyStoryNote === 'function' && tryReadNearbyStoryNote()) {
+    e.preventDefault();
+    return;
+  }
+  if (typeof upgradeChoosing !== 'undefined' && upgradeChoosing && /^Digit[1-3]$/.test(e.code) && !e.repeat) {
+    e.preventDefault();
+    chooseUpgrade(Number(e.code.slice(-1)) - 1);
+    return;
+  }
+  if (gameMode === 'story' && storyDialogueBlocking && /^Digit[1-3]$/.test(e.code) && !e.repeat) {
+    const line = storyDialogueQueue[storyDialogueIndex];
+    if (line?.choices?.length) {
+      e.preventDefault();
+      chooseStoryDialogueChoice(Number(e.code.slice(-1)) - 1);
+      return;
+    }
+  }
   if (gameMode === 'story' && storyDialogueBlocking && ['Space', 'Enter'].includes(e.code) && !e.repeat) {
     e.preventDefault();
     advanceStoryDialogue();
@@ -544,6 +606,92 @@ function createStoryMarker() {
 buildStoryMap();
 storyMarker = createStoryMarker();
 
+// ---------- Story Chapter One // Wrong Page ----------
+const STORY_ONE_X = 220;
+const STORY_ONE_Z = 0;
+const STORY_ONE_SIZE_X = 58;
+const STORY_ONE_SIZE_Z = 66;
+const STORY_ONE_SPAWN = new THREE.Vector3(STORY_ONE_X, 1.72, 27);
+const STORY_ONE_FIRST_MARK = new THREE.Vector3(STORY_ONE_X - 4, 0, 12);
+const STORY_ONE_BRIDGE_SWITCH = new THREE.Vector3(STORY_ONE_X + 7, 0, -3);
+const STORY_ONE_CORRECTION = new THREE.Vector3(STORY_ONE_X, 0, -17);
+const STORY_ONE_EXIT = new THREE.Vector3(STORY_ONE_X, 0, -27);
+let storyBridgeBarrier = null;
+
+function buildStoryOneMap() {
+  makeSketchBox({ x: STORY_ONE_X, y: -.18, z: STORY_ONE_Z, w: STORY_ONE_SIZE_X, h: .35, d: STORY_ONE_SIZE_Z, collider: false, jitter: false });
+  buildGridPatch(STORY_ONE_X, STORY_ONE_Z, STORY_ONE_SIZE_X, STORY_ONE_SIZE_Z);
+  const hx = STORY_ONE_SIZE_X / 2;
+  const hz = STORY_ONE_SIZE_Z / 2;
+  makeSketchBox({ x: STORY_ONE_X, y: 3.0, z: STORY_ONE_Z - hz - .5, w: STORY_ONE_SIZE_X + 2, h: 6, d: 1, shade: true });
+  makeSketchBox({ x: STORY_ONE_X, y: 3.0, z: STORY_ONE_Z + hz + .5, w: STORY_ONE_SIZE_X + 2, h: 6, d: 1, shade: true });
+  makeSketchBox({ x: STORY_ONE_X - hx - .5, y: 3.0, z: STORY_ONE_Z, w: 1, h: 6, d: STORY_ONE_SIZE_Z + 2, shade: true });
+  makeSketchBox({ x: STORY_ONE_X + hx + .5, y: 3.0, z: STORY_ONE_Z, w: 1, h: 6, d: STORY_ONE_SIZE_Z + 2, shade: true });
+
+  // Half-finished city blocks. The blank gaps are deliberate story space.
+  [
+    [-18, 21, 8, 7, 8], [16, 22, 9, 9, 8],
+    [-18, 8, 9, 10, 8], [17, 8, 8, 6, 8],
+    [-17, -8, 8, 7, 9], [18, -9, 9, 10, 9],
+    [-18, -23, 9, 8, 7], [17, -24, 8, 5, 7]
+  ].forEach(([dx,z,w,h,d], i) => makeSketchBox({
+    x: STORY_ONE_X + dx, y: h/2, z, w, h, d, shade: i % 2 === 0, rotationY: (i % 3 - 1) * .035
+  }));
+
+  // Incomplete architecture and cover.
+  makeSketchBox({ x: STORY_ONE_X - 6, y: 1.25, z: 16, w: 5.6, h: 2.5, d: .65, rotationY: .08, shade: true });
+  makeSketchBox({ x: STORY_ONE_X + 7, y: .72, z: 9, w: 4.2, h: 1.44, d: 1.1, rotationY: -.12 });
+  makeSketchBox({ x: STORY_ONE_X - 7, y: .55, z: -4, w: 3.5, h: 1.1, d: 2.6, shade: true });
+  storyBridgeBarrier = makeSketchBox({ x: STORY_ONE_X, y: .78, z: -6.2, w: 15.5, h: 1.56, d: 1.05, shade: false });
+  makeLabel('BLANK // NO LINE', new THREE.Vector3(STORY_ONE_X, 2.0, -6.0), 0, .42);
+  makeSketchBox({ x: STORY_ONE_X + 8, y: 1.3, z: -12, w: 1.0, h: 2.6, d: 7.2, rotationY: .05, shade: true });
+  makeSketchBox({ x: STORY_ONE_X - 8, y: 1.25, z: -20, w: 1.0, h: 2.5, d: 6.4, rotationY: -.05 });
+
+  // World writing / environmental storytelling.
+  makeLabel('WRONG PAGE', new THREE.Vector3(STORY_ONE_X, 4.4, 23), 0, .78);
+  makeLabel('THE MARGIN IS NOT EMPTY', new THREE.Vector3(STORY_ONE_X - 1, 3.0, 5), 0, .48);
+  makeLabel('PAGE 17 WAS HERE', new THREE.Vector3(STORY_ONE_X + 10, 2.8, -6), 0, .44);
+  makeLabel('DO NOT LET IT FINISH YOU', new THREE.Vector3(STORY_ONE_X - 7, 2.9, -14), 0, .42);
+  makeLabel('PROPERTY OF PAGE 4', new THREE.Vector3(STORY_ONE_X + 5, .1, -21), 0, .38);
+}
+
+buildStoryOneMap();
+
+const storyNotes = [];
+let nearbyStoryNote = null;
+let lastStoryNotePromptAt = 0;
+function createStoryNote(x,z,title,text) {
+  const mesh=makeSketchBox({x,y:.045,z,w:1.15,h:.07,d:.82,collider:false,shade:false,rotationY:(Math.random()-.5)*.25});
+  mesh.userData.storyNote=true;
+  storyNotes.push({mesh,title,text,read:false});
+  makeLabel('NOTE',new THREE.Vector3(x,.18,z),0,.18);
+}
+createStoryNote(STORY_ONE_X-10, 15, 'FIELD NOTE // PAGE 17', 'Correctors do not arrive before a boundary failure. If they are already waiting, the page knew the breach was coming.');
+createStoryNote(STORY_ONE_X+9, -3, 'FIELD NOTE // REPAIR LOG', 'The Artist is not creating new matter. Every observed stroke matches missing geometry. It may be repairing damage.');
+createStoryNote(STORY_ONE_X-4, -23, 'FIELD NOTE // RADIO', 'MARA transmission timestamp: three days before Margin District existed. Source location unresolved.');
+
+function updateStoryNotes() {
+  nearbyStoryNote=null;
+  if(gameMode!=='story'||selectedStoryChapter!==1||storyDialogueBlocking) return;
+  let best=1.65;
+  storyNotes.forEach(note=>{
+    if(note.read) return;
+    const d=Math.hypot(camera.position.x-note.mesh.position.x,camera.position.z-note.mesh.position.z);
+    if(d<best){best=d;nearbyStoryNote=note;}
+  });
+  if(nearbyStoryNote && !combatIsActive() && performance.now()-lastStoryNotePromptAt>220) {
+    lastStoryNotePromptAt=performance.now();
+    showCombatMessage('E // READ FIELD NOTE',260);
+  }
+}
+
+function tryReadNearbyStoryNote() {
+  if(!nearbyStoryNote||storyDialogueBlocking||gameMode!=='story') return false;
+  const note=nearbyStoryNote; note.read=true; nearbyStoryNote=null;
+  showStoryDialogueSequence([{kicker:note.title,speaker:'FOUND TEXT',text:note.text}]);
+  return true;
+}
+
 // ---------- Living page / dynamic redraw system ----------
 const dynamicStructures = [];
 let dynamicDrawStartedAt = 0;
@@ -623,6 +771,226 @@ function updateDynamicStructures(now) {
     mesh.rotation.z += Math.sin((now + i * 117) * .01) * .00006 * (1 - t);
   });
 }
+
+// ---------- Interactive paper environment ----------
+const explosiveBarrels = [];
+const breakableWalls = [];
+const inkPuddles = [];
+const foldRamps = [];
+const eraserCovers = [];
+let storyBridgeBuilt = false;
+let lastRampLaunchAt = 0;
+
+function removeColliderForMesh(mesh) {
+  const box = mesh?.userData?.colliderBox;
+  if (!box) return;
+  const i = colliders.indexOf(box);
+  if (i >= 0) colliders.splice(i, 1);
+}
+
+function restoreColliderForMesh(mesh) {
+  const box = mesh?.userData?.colliderBox;
+  if (box && !colliders.includes(box)) colliders.push(box);
+}
+
+function createExplosiveInkBarrel(x, z, story = false) {
+  const mesh = makeSketchBox({ x, y: .62, z, w: .78, h: 1.24, d: .78, shade: true });
+  mesh.userData.envType = 'barrel';
+  mesh.userData.hp = 42;
+  mesh.userData.storyObject = story;
+  explosiveBarrels.push(mesh);
+  makeLabel('INK', new THREE.Vector3(x, 1.55, z), 0, .24);
+  return mesh;
+}
+
+function createBreakablePaperWall(x, z, w = 4.2, h = 2.5, rot = 0, story = false) {
+  const mesh = makeSketchBox({ x, y: h/2, z, w, h, d: .34, rotationY: rot, shade: false });
+  mesh.userData.envType = 'breakable';
+  mesh.userData.hp = 125;
+  mesh.userData.storyObject = story;
+  breakableWalls.push(mesh);
+  return mesh;
+}
+
+function createInkPuddle(x, z, radius = 2.4, story = false) {
+  const g = new THREE.CircleGeometry(radius, 36);
+  const m = new THREE.MeshBasicMaterial({ color: INK, transparent: true, opacity: .115, side: THREE.DoubleSide, depthWrite: false });
+  const mesh = new THREE.Mesh(g, m);
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.set(x, .025, z);
+  scene.add(mesh);
+  const outline = new THREE.LineLoop(
+    new THREE.BufferGeometry().setFromPoints(Array.from({length:40},(_,i)=>{
+      const a=i/40*Math.PI*2; const r=radius*(.94+Math.sin(i*2.37)*.035);
+      return new THREE.Vector3(x+Math.cos(a)*r,.031,z+Math.sin(a)*r);
+    })),
+    new THREE.LineBasicMaterial({ color: INK, transparent: true, opacity: .34 })
+  );
+  scene.add(outline);
+  inkPuddles.push({ x, z, radius, mesh, outline, story });
+}
+
+function createFoldRamp(x, z, rotY = 0, story = false) {
+  const group = new THREE.Group();
+  const ramp = new THREE.Mesh(new THREE.BoxGeometry(3.2, .12, 4.8), paperMaterial);
+  addSketchOutlines(ramp, ramp.geometry, true);
+  ramp.rotation.x = -.28;
+  ramp.position.y = .72;
+  group.add(ramp);
+  group.position.set(x, 0, z);
+  group.rotation.y = rotY;
+  scene.add(group);
+  foldRamps.push({ x, z, rotY, group, story, radius: 2.1 });
+  makeLabel('FOLD →', new THREE.Vector3(x, .15, z + 1.4), 0, .32);
+}
+
+function createEraserCover(x, z) {
+  const cover = makeSketchBox({ x, y: 1.05, z, w: 4.2, h: 2.1, d: .72, shade: true, rotationY: .08 });
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(2.6, 2.72, 30),
+    new THREE.MeshBasicMaterial({ color: PAPER_BRIGHT, side: THREE.DoubleSide, transparent: true, opacity: .72, depthWrite: false })
+  );
+  ring.rotation.x = -Math.PI/2;
+  ring.position.set(x,.035,z);
+  scene.add(ring);
+  eraserCovers.push({ cover, ring, phase: Math.random()*5000, erased:false });
+}
+
+function buildInteractiveEnvironment() {
+  // Arena combat toys.
+  createExplosiveInkBarrel(-10, 3);
+  createExplosiveInkBarrel(12, -7);
+  createExplosiveInkBarrel(20, 19);
+  createBreakablePaperWall(-2, 13, 4.8, 2.35, .08);
+  createBreakablePaperWall(14, 5, 3.8, 2.2, -.16);
+  createInkPuddle(-15, -11, 2.8);
+  createInkPuddle(16, 13, 2.5);
+  createFoldRamp(-21, 20, .45);
+  createFoldRamp(22, -20, -.55);
+  createEraserCover(-13, 11);
+  createEraserCover(13, -13);
+
+  // Chapter One gets its own authored interactions.
+  createExplosiveInkBarrel(STORY_ONE_X - 5, -9, true);
+  createBreakablePaperWall(STORY_ONE_X + 1.5, -14, 5.2, 2.5, .03, true);
+  createInkPuddle(STORY_ONE_X - 7, 6, 2.3, true);
+  createFoldRamp(STORY_ONE_X + 9, -20, -.15, true);
+}
+
+function explodeInkBarrel(mesh) {
+  if (!mesh || mesh.userData.exploded) return;
+  mesh.userData.exploded = true;
+  const p = mesh.position.clone();
+  spawnInkBurst(p.clone().add(new THREE.Vector3(0,.7,0)), 34, .9);
+  playNoiseBurst(.065, .22, 720);
+  playTone(95, 34, .25, .055, 'sawtooth');
+  damageEnemiesInRadius(p, 5.2, 120, null, true);
+  const pd = Math.hypot(camera.position.x-p.x, camera.position.z-p.z);
+  if (pd < 4.6) damagePlayer(Math.max(0, 36*(1-pd/4.6)));
+  removeColliderForMesh(mesh);
+  mesh.visible = false;
+  setTimeout(() => { mesh.userData.hp = 42; mesh.userData.exploded = false; mesh.visible = true; restoreColliderForMesh(mesh); }, 14000);
+}
+
+function damageEnvironment(mesh, amount, hitPoint) {
+  if (!mesh?.userData?.envType) return false;
+  if (mesh.userData.envType === 'barrel') {
+    mesh.userData.hp -= amount;
+    spawnInkBurst(hitPoint, 5, .22);
+    if (mesh.userData.hp <= 0) explodeInkBarrel(mesh);
+    return true;
+  }
+  if (mesh.userData.envType === 'breakable') {
+    mesh.userData.hp -= amount;
+    spawnInkBurst(hitPoint, 6, .24);
+    if (mesh.userData.hp <= 0) {
+      removeColliderForMesh(mesh);
+      mesh.visible = false;
+      spawnPaperBreakChunks(mesh.position.clone(), 18);
+      playNoiseBurst(.03, .18, 1500);
+    }
+    return true;
+  }
+  return false;
+}
+
+function spawnPaperBreakChunks(center, count = 14) {
+  for (let i=0;i<count;i++) {
+    const g = new THREE.BoxGeometry(.08+Math.random()*.14,.05+Math.random()*.1,.08+Math.random()*.14);
+    const m = new THREE.MeshBasicMaterial({ color: i%2 ? PAPER_BRIGHT : PAPER_SHADE, transparent:true, opacity:1 });
+    const cube = new THREE.Mesh(g,m); addSketchOutlines(cube,g,false);
+    cube.position.copy(center).add(new THREE.Vector3((Math.random()-.5)*2.2,Math.random()*1.8,(Math.random()-.5)*.7));
+    scene.add(cube);
+    deathChunks.push({ mesh:cube, velocity:new THREE.Vector3((Math.random()-.5)*3.2,1+Math.random()*3,(Math.random()-.5)*3.2), spin:new THREE.Vector3(Math.random()*8,Math.random()*8,Math.random()*8), born:performance.now(), life:1100+Math.random()*650, ground:.04, bounces:1 });
+  }
+}
+
+function damageEnemiesInRadius(point, radius, maxDamage, exclude = null, explosive = false) {
+  enemies.forEach(enemy => {
+    if (!enemy.alive || enemy.dying || !enemy.activeInRound || enemy === exclude) return;
+    const d = enemy.group.position.distanceTo(point);
+    if (d > radius) return;
+    const dmg = Math.max(8, maxDamage * (1 - d/radius));
+    const dir = enemy.group.position.clone().sub(point).normalize();
+    damageEnemy(enemy, dmg, 'body', enemy.group.position.clone().add(new THREE.Vector3(0,1,0)), dir);
+    if (explosive) enemy.knockbackVelocity.addScaledVector(dir, 5.5);
+  });
+}
+
+function buildStoryBridge() {
+  if (storyBridgeBuilt) return;
+  storyBridgeBuilt = true;
+  if (storyBridgeBarrier) { storyBridgeBarrier.visible = false; removeColliderForMesh(storyBridgeBarrier); }
+  dynamicDrawStartedAt = performance.now();
+  for (let i=0;i<6;i++) {
+    const mesh = dynamicBox({ x: STORY_ONE_X + (i-2.5)*1.55, y:.18, z:-6.2, w:1.48, h:.36, d:4.0, shade:i%2===0 });
+    mesh.userData.storyBridge = true;
+  }
+  playMapDrawSound();
+  showRoundBanner('WRONG PAGE', 'BRIDGE // DRAWN', 'THE PAGE IS HELPING. FOR NOW.', 1900);
+}
+
+function pointInInkPuddle(x,z) {
+  return inkPuddles.some(p => {
+    if (gameMode === 'story' && !p.story) return false;
+    if (gameMode === 'arena' && p.story) return false;
+    return Math.hypot(x-p.x,z-p.z) < p.radius;
+  });
+}
+
+function updateInteractiveEnvironment(now, dt) {
+  // Eraser zones periodically remove and redraw cover in Arena.
+  if (gameMode === 'arena') {
+    eraserCovers.forEach((entry,i) => {
+      const phase = (now + entry.phase + i*900) % 7600;
+      const shouldErase = phase > 5200 && phase < 6900;
+      if (shouldErase !== entry.erased) {
+        entry.erased = shouldErase;
+        entry.cover.visible = !shouldErase;
+        if (shouldErase) removeColliderForMesh(entry.cover); else restoreColliderForMesh(entry.cover);
+        entry.ring.material.opacity = shouldErase ? .95 : .55;
+        if (shouldErase) playNoiseBurst(.012,.18,2200);
+      }
+    });
+  }
+
+  // Folded-paper ramps launch the player and preserve forward momentum.
+  if (controls.isLocked && performance.now()-lastRampLaunchAt > 900) {
+    for (const r of foldRamps) {
+      if (gameMode === 'story' && !r.story) continue;
+      if (gameMode === 'arena' && r.story) continue;
+      if (Math.hypot(camera.position.x-r.x,camera.position.z-r.z) < r.radius && grounded && Math.hypot(velocity.x,velocity.z) > 3.5) {
+        const dir = new THREE.Vector3(Math.sin(r.rotY),0,-Math.cos(r.rotY));
+        velocity.x += dir.x*5.2; velocity.z += dir.z*5.2; velocity.y = Math.max(velocity.y,8.4);
+        grounded = false; lastRampLaunchAt = performance.now(); impactFovKick = Math.max(impactFovKick,4);
+        playMovementSound('dash');
+        break;
+      }
+    }
+  }
+}
+
+buildInteractiveEnvironment();
 
 // ---------- First-person weapon viewmodel ----------
 // The weapon is built from simple Three.js primitives so the whole thing keeps the
@@ -801,6 +1169,11 @@ const ENEMY_TYPES = {
     range: 27, accuracyMin: .34, accuracyMax: .61, damageMin: 5, damageMax: 8,
     shotMin: 1450, shotMax: 2050
   },
+  corrector: {
+    label: 'CORRECTOR', hp: 108, scale: [1.0, 1.04, 1.0], behavior: 'corrector', speed: 1.72,
+    range: 31, accuracyMin: .46, accuracyMax: .68, damageMin: 6, damageMax: 9,
+    shotMin: 1350, shotMax: 1850
+  },
   guardian: {
     label: 'PAGE GUARDIAN', hp: 430, scale: [1.55, 1.48, 1.55], behavior: 'guardian', speed: 1.05,
     range: 32, accuracyMin: .35, accuracyMax: .58, damageMin: 7, damageMax: 10,
@@ -847,6 +1220,69 @@ let roundBannerHideAt = 0;
 let playerInvulnerableUntil = 0;
 let roundWarmupUntil = 0;
 let activeArtist = null;
+let inkTotal = 0;
+let playerMaxHealth = 100;
+let arenaObjective = null;
+let arenaObjectiveMarker = null;
+let objectiveTokens = [];
+let objectiveLastDamageAt = 0;
+let objectiveNextReinforcementAt = 0;
+let upgradeChoosing = false;
+let upgradeChoices = [];
+let upgradeResumePlan = null;
+let triggerHoldStartedAt = 0;
+let crossoutSpeedUntil = 0;
+let nextDashTrailTick = 0;
+
+const upgradeState = {
+  damageMul:1, reloadMul:1, spreadMul:1, moveMul:1, headshotMul:1, fireRateMul:1,
+  damageTakenMul:1, dashCooldownMul:1, sprintDrainMul:1, maxHealthBonus:0,
+  healOnKill:0, knifeHeal:0, ammoRefundChance:0, lastWord:false, lowHealthDamage:false,
+  dashDamage:false, slideFeed:false, riflePenetration:false, markerSplash:false,
+  shotgunRicochet:false, pistolPop:false, smgRamp:false, quietOutline:false,
+  cubeShock:false, killStamina:false
+};
+
+const ARENA_OBJECTIVES = [
+  { id:'erase', label:'ERASE', text:'CLEAR EVERY HOSTILE LINE' },
+  { id:'hold', label:'HOLD THE LINE', text:'STAY INSIDE THE MARK' },
+  { id:'relay', label:'RELAY', text:'TOUCH THREE SIGNAL MARKS' },
+  { id:'marked', label:'MARKED', text:'CROSS OUT THE MARKED TARGET' },
+  { id:'inkrun', label:'INK RUN', text:'COLLECT THREE INK CARTRIDGES' },
+  { id:'breakout', label:'BREAKOUT', text:'OPEN THE EXIT, THEN RUN' },
+  { id:'delivery', label:'DELIVERY', text:'CARRY THE MARK FROM A TO B' },
+  { id:'dontstop', label:"DON'T STOP", text:'KEEP MOVING UNTIL THE TIMER ENDS' },
+  { id:'nomargin', label:'NO MARGIN', text:'SURVIVE INSIDE THE SHRINKING LINE' }
+];
+
+const UPGRADES = [
+  {id:'hard-ink',name:'HARD INK',desc:'+20% ranged damage.',cost:80,max:3,apply:()=>upgradeState.damageMul*=1.20},
+  {id:'quick-hands',name:'QUICK HANDS',desc:'Reload animations complete 22% faster.',cost:70,max:3,apply:()=>upgradeState.reloadMul*=.78},
+  {id:'straight-edge',name:'STRAIGHT EDGE',desc:'Weapon spread reduced by 28%.',cost:65,max:3,apply:()=>upgradeState.spreadMul*=.72},
+  {id:'thick-paper',name:'THICK PAPER',desc:'Take 15% less damage.',cost:95,max:3,apply:()=>upgradeState.damageTakenMul*=.85},
+  {id:'light-feet',name:'LIGHT FEET',desc:'+10% movement speed.',cost:75,max:3,apply:()=>upgradeState.moveMul*=1.10},
+  {id:'headcase',name:'HEADCASE',desc:'+35% headshot damage.',cost:85,max:3,apply:()=>upgradeState.headshotMul*=1.35},
+  {id:'overdraw',name:'OVERDRAW',desc:'+15% fire rate.',cost:85,max:3,apply:()=>upgradeState.fireRateMul*=1.15},
+  {id:'extra-page',name:'EXTRA PAGE',desc:'+25 maximum health and heal 25.',cost:100,max:2,apply:()=>{upgradeState.maxHealthBonus+=25;playerMaxHealth=100+upgradeState.maxHealthBonus;playerHealth=Math.min(playerMaxHealth,playerHealth+25);updateHealthHud();}},
+  {id:'second-wind',name:'SECOND WIND',desc:'Every kill restores 5 health.',cost:90,max:3,apply:()=>upgradeState.healOnKill+=5},
+  {id:'crossout-ration',name:'CROSSOUT RATION',desc:'CROSSOUT gains an extra +25 health and +20 Ink.',cost:85,max:1,apply:()=>upgradeState.knifeHeal=25},
+  {id:'afterimage',name:'AFTERIMAGE',desc:'Dashing damages enemies you pass.',cost:95,max:1,apply:()=>upgradeState.dashDamage=true},
+  {id:'slide-feed',name:'SLIDE FEED',desc:'Kills while sliding refill 2 rounds.',cost:80,max:1,apply:()=>upgradeState.slideFeed=true},
+  {id:'throughline',name:'THROUGHLINE',desc:'Ruler Rifle rounds penetrate one extra target.',cost:110,max:1,apply:()=>upgradeState.riflePenetration=true},
+  {id:'marker-bloom',name:'MARKER BLOOM',desc:'Marker hits splash damage around the impact.',cost:110,max:1,apply:()=>upgradeState.markerSplash=true},
+  {id:'bounce-draft',name:'BOUNCE DRAFT',desc:'Shotgun pellets ricochet once from paper walls.',cost:105,max:1,apply:()=>upgradeState.shotgunRicochet=true},
+  {id:'pop-quiz',name:'POP QUIZ',desc:'Pistol headshot kills burst into damaging cubes.',cost:100,max:1,apply:()=>upgradeState.pistolPop=true},
+  {id:'runaway-scribble',name:'RUNAWAY SCRIBBLE',desc:'SMG fires faster the longer you hold the trigger.',cost:105,max:1,apply:()=>upgradeState.smgRamp=true},
+  {id:'last-word',name:'LAST WORD',desc:'The last round in a magazine deals 4× damage.',cost:95,max:1,apply:()=>upgradeState.lastWord=true},
+  {id:'quiet-outline',name:'QUIET OUTLINE',desc:'Crouching makes Snipers dramatically less accurate.',cost:75,max:1,apply:()=>upgradeState.quietOutline=true},
+  {id:'cube-shock',name:'CUBE SHOCK',desc:'Headshot kills damage nearby enemies when they break apart.',cost:110,max:1,apply:()=>upgradeState.cubeShock=true},
+  {id:'kill-stamina',name:'INK LUNGS',desc:'Kills restore 14 stamina.',cost:70,max:2,apply:()=>upgradeState.killStamina+=14},
+  {id:'slipstream',name:'SLIPSTREAM',desc:'Dash cooldown reduced by 20%.',cost:80,max:2,apply:()=>upgradeState.dashCooldownMul*=.8},
+  {id:'long-breath',name:'LONG BREATH',desc:'Sprint drains 25% less stamina.',cost:70,max:2,apply:()=>upgradeState.sprintDrainMul*=.75},
+  {id:'bad-idea',name:'BAD IDEA',desc:'Deal +30% damage while below 35% health.',cost:90,max:1,apply:()=>upgradeState.lowHealthDamage=true},
+  {id:'lucky-margin',name:'LUCKY MARGIN',desc:'Kills have an 18% chance to refund a round.',cost:70,max:2,apply:()=>upgradeState.ammoRefundChance+=.18}
+];
+const upgradeStacks = new Map();
 
 let storyState = 'boot';
 let storyStage = 0;
@@ -863,6 +1299,10 @@ let storyDialogueIndex = 0;
 let storyDialogueOnComplete = null;
 let storyWakeStartedAt = 0;
 let storyWakeOpening = false;
+let storyCheckpoint = STORY_SPAWN.clone();
+let storyFlags = { trustedMara:false, ignoredMara:false, relayTouched:false, answeredUnknown:false };
+let storySetpieceStage = 0;
+let storyChoiceResolved = false;
 
 let audioContext = null;
 let masterGainNode = null;
@@ -1170,6 +1610,7 @@ function configureEnemy(enemy, type, spawnPoint) {
   enemy.bossPhase = 1;
   enemy.lastBossPhase = 1;
   enemy.flankSide = (enemy.index + roundSpawned) % 2 ? 1 : -1;
+  enemy.crossoutExecution = false;
 
   if (enemy.typeLabel) enemy.visual.remove(enemy.typeLabel);
   enemy.typeLabel = makeEnemyLabel(config.label);
@@ -1179,7 +1620,14 @@ function configureEnemy(enemy, type, spawnPoint) {
     part.visible = true;
     if (part.userData.basePosition) part.position.copy(part.userData.basePosition);
     if (part.userData.baseRotation) part.rotation.copy(part.userData.baseRotation);
-    if (part.material) part.material.opacity = 1;
+    if (part.material) {
+      part.material.opacity = 1;
+      part.material.color.set(type === 'corrector' ? 0xfffef9 : 0xf9f5e8);
+    }
+    part.children.forEach((child, idx) => {
+      if (!child.material || child.material.opacity === undefined) return;
+      child.material.opacity = type === 'corrector' ? (idx === 0 ? .96 : .07) : (idx === 0 ? .92 : Math.max(.10, .28 - idx * .05));
+    });
   });
 
   enemy.nextShotAt = performance.now() + config.shotMin * .72 + Math.random() * (config.shotMax - config.shotMin);
@@ -1203,6 +1651,7 @@ function deactivateEnemy(enemy) {
   enemy.dying = false;
   enemy.activeInRound = false;
   enemy.storyEncounterId = 0;
+  enemy.objectiveMarked = false;
   enemy.group.visible = false;
   enemy.hp = 0;
   enemy.availableAt = performance.now() + 250;
@@ -1389,8 +1838,29 @@ function startEnemyDeath(enemy, part) {
   if (gameMode === 'story') {
     // Only enemies belonging to the current scripted encounter advance Story Mode.
     if (enemy.storyEncounterId && enemy.storyEncounterId === activeStoryEncounterId) storyKills += 1;
-  } else roundKills += 1;
+  } else {
+    roundKills += 1;
+    const killInk = enemy.type === 'artist' ? 300 : enemy.type === 'heavy' ? 28 : enemy.type === 'sniper' ? 18 : enemy.type === 'rusher' ? 14 : 10;
+    awardInk(killInk + (part === 'head' ? 5 : 0));
+    if (arenaObjective?.id === 'marked' && enemy.objectiveMarked) arenaObjective.progress = 1;
+  }
   totalKills += 1;
+
+  if (upgradeState.healOnKill > 0) {
+    playerHealth = Math.min(playerMaxHealth, playerHealth + upgradeState.healOnKill);
+    updateHealthHud();
+  }
+  if (upgradeState.killStamina > 0) stamina = Math.min(100, stamina + upgradeState.killStamina);
+  if (upgradeState.slideFeed && sliding && !currentWeapon().melee) {
+    ammoCurrent = Math.min(currentWeapon().magSize, ammoCurrent + 2);
+    syncCurrentWeaponAmmo(); updateAmmoHud();
+  }
+  if (upgradeState.ammoRefundChance > 0 && !currentWeapon().melee && Math.random() < upgradeState.ammoRefundChance) {
+    ammoCurrent = Math.min(currentWeapon().magSize, ammoCurrent + 1);
+    syncCurrentWeaponAmmo(); updateAmmoHud();
+  }
+  if (part === 'head' && upgradeState.cubeShock) damageEnemiesInRadius(enemy.group.position, 4.2, 52, enemy, true);
+  if (part === 'head' && currentWeaponId === 'pistol' && upgradeState.pistolPop) damageEnemiesInRadius(enemy.group.position, 4.8, 72, enemy, true);
   updateRoundHud();
   if (enemy.type === 'artist') {
     showCombatMessage('THE ARTIST // CROSSED OUT', 1800);
@@ -1491,7 +1961,7 @@ function enemyHasLineOfSight(enemy, targetPos) {
   direction.normalize();
   enemyRaycaster.set(origin, direction);
   enemyRaycaster.far = dist;
-  const blockers = enemyRaycaster.intersectObjects(sketchMeshes, false);
+  const blockers = enemyRaycaster.intersectObjects(sketchMeshes, false).filter(hit => hit.object.visible);
   return blockers.length === 0 || blockers[0].distance > dist - .3;
 }
 
@@ -1504,6 +1974,7 @@ function enemyCanMoveAt(x, z, radius = .34) {
 }
 
 function moveEnemyToward(enemy, target, dt, speed) {
+  if (pointInInkPuddle(enemy.navPosition.x, enemy.navPosition.z)) speed *= .55;
   const dir = target.clone().sub(enemy.navPosition);
   dir.y = 0;
   if (dir.lengthSq() < .02) return;
@@ -1560,7 +2031,8 @@ function enemyShoot(enemy) {
   playEnemyShotSound(enemy.type);
   addTemporaryTracer(origin, target.clone().add(new THREE.Vector3((Math.random()-.5)*.35, (Math.random()-.5)*.25, (Math.random()-.5)*.35)));
   const distanceFactor = THREE.MathUtils.clamp(1 - dist / Math.max(1, cfg.range * 1.35), 0, 1);
-  const accuracy = THREE.MathUtils.lerp(cfg.accuracyMin, cfg.accuracyMax, distanceFactor);
+  let accuracy = THREE.MathUtils.lerp(cfg.accuracyMin, cfg.accuracyMax, distanceFactor);
+  if (enemy.type === 'sniper' && crouching && upgradeState.quietOutline) accuracy *= .35;
   if (Math.random() < accuracy) {
     const damage = cfg.damageMin + Math.random() * (cfg.damageMax - cfg.damageMin);
     damagePlayer(damage * (1 + (pageNumber - 1) * .06));
@@ -1594,8 +2066,27 @@ function spawnNextEnemies(now = performance.now()) {
     const type = def.queue[roundSpawned];
     if (type === 'artist' && activeEnemyCount() > 0) break;
     const spawn = type === 'artist' ? [0, -24] : chooseSpawnPoint(roundSpawned);
+    const ordinal = roundSpawned;
     configureEnemy(enemy, type, spawn);
+    enemy.objectiveMarked = !!(arenaObjective && arenaObjective.id === 'marked' && ordinal === arenaObjective.markedOrdinal);
+    if (enemy.objectiveMarked) {
+      if (enemy.typeLabel) enemy.visual.remove(enemy.typeLabel);
+      enemy.typeLabel = makeEnemyLabel(`MARKED // ${enemy.config.label}`);
+      enemy.visual.add(enemy.typeLabel);
+    }
     roundSpawned += 1;
+  }
+
+  const persistentObjective = arenaObjective && ['hold','relay','inkrun','breakout','delivery','dontstop','nomargin'].includes(arenaObjective.id) && !arenaObjective.completed;
+  if (persistentObjective && roundSpawned >= def.queue.length && activeEnemyCount() < Math.min(2, def.cap) && now >= objectiveNextReinforcementAt) {
+    const enemy = enemies.find(e => !e.activeInRound && !e.alive && !e.dying && now >= e.availableAt);
+    if (enemy) {
+      const fallbackTypes = currentRoundIndex >= 2 ? ['rifleman','rusher','flanker'] : ['rifleman','rusher'];
+      const type = fallbackTypes[(roundKills + pageNumber + currentRoundIndex) % fallbackTypes.length];
+      configureEnemy(enemy, type, chooseSpawnPoint(roundKills + 11));
+      enemy.objectiveMarked = false;
+      objectiveNextReinforcementAt = now + 2200;
+    }
   }
 }
 
@@ -1607,16 +2098,229 @@ function showRoundBanner(kicker, title, subtitle, duration = 1800) {
   roundBannerHideAt = performance.now() + duration;
 }
 
+function updateInkHud() {
+  const txt = String(Math.max(0, Math.floor(inkTotal))).padStart(3,'0');
+  if (inkCountEl) inkCountEl.textContent = txt;
+  if (upgradeInkEl) upgradeInkEl.textContent = `INK // ${txt}`;
+}
+
+function awardInk(amount, reason = '') {
+  inkTotal += Math.max(0, Math.round(amount));
+  updateInkHud();
+  if (amount >= 50 && reason) showCombatMessage(`+${Math.round(amount)} INK // ${reason}`, 650);
+}
+
+function makeObjectiveMarker() {
+  const group = new THREE.Group();
+  const mat = new THREE.LineBasicMaterial({ color: INK, transparent:true, opacity:.72 });
+  for (let pass=0; pass<3; pass++) {
+    const pts=[]; const r=1.55+pass*.07;
+    for (let i=0;i<46;i++) { const a=i/46*Math.PI*2; pts.push(new THREE.Vector3(Math.cos(a)*r,.035+pass*.01,Math.sin(a)*r)); }
+    group.add(new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(pts), mat.clone()));
+  }
+  group.visible=false; scene.add(group); return group;
+}
+
+arenaObjectiveMarker = makeObjectiveMarker();
+
+function clearObjectiveTokens() {
+  objectiveTokens.forEach(t => {
+    scene.remove(t.group);
+    t.group.traverse(o=>{ o.geometry?.dispose?.(); if(o.material && o.material!==paperMaterial && o.material!==paperShadeMaterial) o.material.dispose?.(); });
+  });
+  objectiveTokens=[];
+}
+
+function clearArenaObjectiveVisuals() {
+  arenaObjectiveMarker.visible=false;
+  arenaObjectiveMarker.scale.set(1,1,1);
+  clearObjectiveTokens();
+  arenaObjectiveEl?.classList.remove('active');
+}
+
+function spawnObjectiveToken(x,z,index) {
+  const group=new THREE.Group();
+  const g=new THREE.BoxGeometry(.44,.62,.32);
+  const mesh=new THREE.Mesh(g,paperShadeMaterial); addSketchOutlines(mesh,g,true); group.add(mesh);
+  const ring=new THREE.Mesh(new THREE.RingGeometry(.54,.60,24),new THREE.MeshBasicMaterial({color:INK,side:THREE.DoubleSide,transparent:true,opacity:.34}));
+  ring.rotation.x=-Math.PI/2; ring.position.y=-.28; group.add(ring);
+  group.position.set(x,.55,z); scene.add(group);
+  objectiveTokens.push({group,index,collected:false,phase:Math.random()*5});
+}
+
+function chooseObjectiveForRound(roundIndex) {
+  if (roundIndex === 4) return ARENA_OBJECTIVES[0];
+  if (pageNumber === 1) return [ARENA_OBJECTIVES[0],ARENA_OBJECTIVES[1],ARENA_OBJECTIVES[2],ARENA_OBJECTIVES[3]][roundIndex];
+  const pool=[ARENA_OBJECTIVES[4],ARENA_OBJECTIVES[5],ARENA_OBJECTIVES[6],ARENA_OBJECTIVES[7],ARENA_OBJECTIVES[8],ARENA_OBJECTIVES[2],ARENA_OBJECTIVES[3],ARENA_OBJECTIVES[1]];
+  return pool[(pageNumber + roundIndex - 2) % pool.length];
+}
+
+function beginArenaObjective() {
+  clearArenaObjectiveVisuals();
+  const def=ROUND_DEFINITIONS[currentRoundIndex];
+  const base=chooseObjectiveForRound(currentRoundIndex);
+  arenaObjective={ id:base.id,label:base.label,text:base.text,progress:0,target:1,completed:false,index:0,startedAt:performance.now(),lastTickAt:0,markedOrdinal:Math.min(2,def.queue.length-1),exitOpen:false };
+  objectiveNextReinforcementAt = performance.now() + 2600;
+  if (base.id==='erase') arenaObjective.target=def.queue.length;
+  if (base.id==='hold') { arenaObjective.target=18; arenaObjective.point=new THREE.Vector3(0,0,8); arenaObjectiveMarker.position.copy(arenaObjective.point); arenaObjectiveMarker.visible=true; }
+  if (base.id==='relay') { arenaObjective.points=[new THREE.Vector3(-15,0,11),new THREE.Vector3(15,0,2),new THREE.Vector3(0,0,-17)]; arenaObjective.target=3; arenaObjectiveMarker.position.copy(arenaObjective.points[0]); arenaObjectiveMarker.visible=true; }
+  if (base.id==='marked') arenaObjective.target=1;
+  if (base.id==='inkrun') { arenaObjective.target=3; [[-16,9],[16,-4],[0,-19]].forEach((p,i)=>spawnObjectiveToken(p[0],p[1],i)); }
+  if (base.id==='breakout') { arenaObjective.target=1; arenaObjective.requiredKills=2; arenaObjective.exitPoint=new THREE.Vector3(0,0,-29); }
+  if (base.id==='delivery') { arenaObjective.target=2; arenaObjective.pickupPoint=new THREE.Vector3(-18,0,18); arenaObjective.dropPoint=new THREE.Vector3(18,0,-18); arenaObjective.carrying=false; arenaObjectiveMarker.position.copy(arenaObjective.pickupPoint); arenaObjectiveMarker.visible=true; }
+  if (base.id==='dontstop') { arenaObjective.target=22; arenaObjective.stillTime=0; }
+  if (base.id==='nomargin') { arenaObjective.target=25; arenaObjective.point=new THREE.Vector3(0,0,0); arenaObjective.safeRadius=27; arenaObjectiveMarker.position.copy(arenaObjective.point); arenaObjectiveMarker.visible=true; arenaObjectiveMarker.scale.set(17,1,17); }
+  arenaObjectiveEl?.classList.add('active');
+  updateArenaObjectiveHud();
+}
+
+function updateArenaObjectiveHud() {
+  if (!arenaObjective) return;
+  arenaObjectiveKickerEl.textContent=`OBJECTIVE // ${arenaObjective.label}`;
+  arenaObjectiveTextEl.textContent=arenaObjective.text;
+  let ratio=0, progress='';
+  if (arenaObjective.id==='hold' || arenaObjective.id==='nomargin' || arenaObjective.id==='dontstop') {
+    ratio=THREE.MathUtils.clamp(arenaObjective.progress/arenaObjective.target,0,1);
+    progress=`${arenaObjective.progress.toFixed(1)} / ${arenaObjective.target}s`;
+  } else if (arenaObjective.id==='breakout') {
+    ratio=arenaObjective.exitOpen ? 1 : THREE.MathUtils.clamp(roundKills/arenaObjective.requiredKills,0,1);
+    progress=arenaObjective.exitOpen ? 'EXIT OPEN // REACH THE MARK' : `${Math.min(roundKills,arenaObjective.requiredKills)} / ${arenaObjective.requiredKills} CONTACTS`;
+  } else {
+    ratio=THREE.MathUtils.clamp(arenaObjective.progress/Math.max(1,arenaObjective.target),0,1);
+    progress=`${Math.floor(arenaObjective.progress)} / ${arenaObjective.target}`;
+  }
+  objectiveFillEl.style.transform=`scaleX(${ratio})`;
+  arenaObjectiveProgressEl.textContent=progress;
+}
+
+function completeArenaObjective(now=performance.now()) {
+  if (!arenaObjective || arenaObjective.completed || roundState!=='active') return;
+  arenaObjective.completed=true;
+  awardInk(100 + currentRoundIndex*25 + Math.min(60,(pageNumber-1)*10), 'OBJECTIVE');
+  clearArenaObjectiveVisuals();
+  finishCurrentRound(now);
+}
+
+function updateArenaObjective(now,dt) {
+  if (gameMode!=='arena' || roundState!=='active' || !arenaObjective) return;
+  if (arenaObjective.id==='erase') {
+    arenaObjective.progress=roundKills;
+    if (roundKills>=arenaObjective.target && activeEnemyCount()===0) completeArenaObjective(now);
+  } else if (arenaObjective.id==='marked') {
+    if (arenaObjective.progress>=1) completeArenaObjective(now);
+  } else if (arenaObjective.id==='hold') {
+    const d=Math.hypot(camera.position.x-arenaObjective.point.x,camera.position.z-arenaObjective.point.z);
+    if (d<2.0) arenaObjective.progress=Math.min(arenaObjective.target,arenaObjective.progress+dt);
+    else arenaObjective.progress=Math.max(0,arenaObjective.progress-dt*.16);
+    const pulse=1+Math.sin(now*.004)*.05; arenaObjectiveMarker.scale.set(pulse,pulse,pulse);
+    if (arenaObjective.progress>=arenaObjective.target) completeArenaObjective(now);
+  } else if (arenaObjective.id==='relay') {
+    const p=arenaObjective.points[arenaObjective.index];
+    if (p && Math.hypot(camera.position.x-p.x,camera.position.z-p.z)<1.9) {
+      arenaObjective.index++; arenaObjective.progress=arenaObjective.index; playTone(420,760,.12,.018,'triangle');
+      if (arenaObjective.index>=arenaObjective.points.length) completeArenaObjective(now);
+      else arenaObjectiveMarker.position.copy(arenaObjective.points[arenaObjective.index]);
+    }
+  } else if (arenaObjective.id==='inkrun') {
+    objectiveTokens.forEach(t=>{
+      if(t.collected) return;
+      t.group.rotation.y=now*.0012+t.phase; t.group.position.y=.55+Math.sin(now*.004+t.phase)*.1;
+      if(Math.hypot(camera.position.x-t.group.position.x,camera.position.z-t.group.position.z)<1.35){t.collected=true;t.group.visible=false;arenaObjective.progress++;awardInk(18,'CARTRIDGE');playPickupSound('ammo');}
+    });
+    if(arenaObjective.progress>=arenaObjective.target) completeArenaObjective(now);
+  } else if (arenaObjective.id==='breakout') {
+    if(!arenaObjective.exitOpen && roundKills>=arenaObjective.requiredKills){arenaObjective.exitOpen=true;arenaObjectiveMarker.position.copy(arenaObjective.exitPoint);arenaObjectiveMarker.visible=true;showCombatMessage('EXIT DRAWN // MOVE',750);}
+    if(arenaObjective.exitOpen && Math.hypot(camera.position.x-arenaObjective.exitPoint.x,camera.position.z-arenaObjective.exitPoint.z)<2.0) completeArenaObjective(now);
+  } else if (arenaObjective.id==='delivery') {
+    const targetPoint=arenaObjective.carrying?arenaObjective.dropPoint:arenaObjective.pickupPoint;
+    if(Math.hypot(camera.position.x-targetPoint.x,camera.position.z-targetPoint.z)<1.9){
+      if(!arenaObjective.carrying){arenaObjective.carrying=true;arenaObjective.progress=1;arenaObjectiveMarker.position.copy(arenaObjective.dropPoint);arenaObjective.text='DELIVER THE MARK TO THE FAR CIRCLE';showCombatMessage('MARK PICKED UP // MOVE',650);}
+      else {arenaObjective.progress=2;completeArenaObjective(now);}
+    }
+  } else if (arenaObjective.id==='dontstop') {
+    const speed=Math.hypot(velocity.x,velocity.z);
+    if(speed>2.4){arenaObjective.progress=Math.min(arenaObjective.target,arenaObjective.progress+dt);arenaObjective.stillTime=0;}
+    else {arenaObjective.stillTime+=dt;if(arenaObjective.stillTime>.8) arenaObjective.progress=Math.max(0,arenaObjective.progress-dt*.4);}
+    if(arenaObjective.progress>=arenaObjective.target) completeArenaObjective(now);
+  } else if (arenaObjective.id==='nomargin') {
+    arenaObjective.progress=Math.min(arenaObjective.target,(now-arenaObjective.startedAt)/1000);
+    arenaObjective.safeRadius=THREE.MathUtils.lerp(27,8,arenaObjective.progress/arenaObjective.target);
+    arenaObjectiveMarker.scale.set(arenaObjective.safeRadius/1.55,1,arenaObjective.safeRadius/1.55);
+    const d=Math.hypot(camera.position.x,camera.position.z);
+    if(d>arenaObjective.safeRadius && now-objectiveLastDamageAt>760){objectiveLastDamageAt=now;damagePlayer(8);showCombatMessage('OUTSIDE THE MARGIN',360);}
+    if(arenaObjective.progress>=arenaObjective.target) completeArenaObjective(now);
+  }
+  updateArenaObjectiveHud();
+}
+
+function resetUpgradeState() {
+  Object.assign(upgradeState,{damageMul:1,reloadMul:1,spreadMul:1,moveMul:1,headshotMul:1,fireRateMul:1,damageTakenMul:1,dashCooldownMul:1,sprintDrainMul:1,maxHealthBonus:0,healOnKill:0,knifeHeal:0,ammoRefundChance:0,lastWord:false,lowHealthDamage:false,dashDamage:false,slideFeed:false,riflePenetration:false,markerSplash:false,shotgunRicochet:false,pistolPop:false,smgRamp:false,quietOutline:false,cubeShock:false,killStamina:false});
+  upgradeStacks.clear(); playerMaxHealth=100;
+}
+
+function renderUpgradeCards() {
+  if(!upgradeCardsEl) return;
+  upgradeCardsEl.innerHTML='';
+  upgradeChoices.forEach((u,i)=>{
+    const btn=document.createElement('button'); btn.className='upgrade-card'+(inkTotal<u.cost?' unaffordable':'');
+    btn.innerHTML=`<span class="slot">${i+1}</span><b>${u.name}</b><p>${u.desc}</p><small>${u.cost} INK // ${(upgradeStacks.get(u.id)||0)+1}/${u.max}</small>`;
+    btn.addEventListener('click',()=>chooseUpgrade(i)); upgradeCardsEl.appendChild(btn);
+  });
+  updateInkHud();
+}
+
+function openUpgradeDraft() {
+  const eligible=UPGRADES.filter(u=>(upgradeStacks.get(u.id)||0)<u.max);
+  if(!eligible.length){ scheduleNextRoundAfterUpgrade(); return; }
+  upgradeChoices=[]; const pool=[...eligible];
+  while(upgradeChoices.length<Math.min(3,pool.length)){const i=Math.floor(Math.random()*pool.length);upgradeChoices.push(pool.splice(i,1)[0]);}
+  if (upgradeChoices.every(u=>u.cost>inkTotal)) {
+    const affordable=eligible.filter(u=>u.cost<=inkTotal).sort((a,b)=>a.cost-b.cost)[0];
+    if (affordable) upgradeChoices[0]=affordable;
+  }
+  upgradeChoosing=true; roundState='upgrade'; triggerHeld=false; rightMouseDown=false; isAiming=false;
+  renderUpgradeCards(); upgradeScreenEl.classList.add('visible');
+  if(controls.isLocked) controls.unlock();
+}
+
+function chooseUpgrade(index) {
+  if(!upgradeChoosing) return;
+  const u=upgradeChoices[index]; if(!u) return;
+  if(inkTotal<u.cost){playTone(140,90,.08,.015,'square');return;}
+  inkTotal-=u.cost; upgradeStacks.set(u.id,(upgradeStacks.get(u.id)||0)+1); u.apply(); updateInkHud();
+  upgradeChoosing=false; upgradeScreenEl.classList.remove('visible');
+  showCombatMessage(`${u.name} // DRAWN IN`,900); playMapDrawSound();
+  scheduleNextRoundAfterUpgrade();
+  controls.lock();
+}
+
+function scheduleNextRoundAfterUpgrade() {
+  roundState='intermission'; nextRoundAt=performance.now()+850;
+}
+
 function updateRoundHud() {
+  updateInkHud();
   if (gameMode === 'story') {
-    mapNameEl.textContent = 'MARGIN DISTRICT';
+    const chapterOne = selectedStoryChapter === 1;
+    mapNameEl.textContent = chapterOne ? 'WRONG PAGE' : 'MARGIN DISTRICT';
     pageLabelEl.textContent = 'CHAPTER';
-    pageCountEl.textContent = 'ZERO';
+    pageCountEl.textContent = chapterOne ? 'ONE' : 'ZERO';
     roundLabelEl.textContent = 'SECTION';
-    roundCountEl.textContent = storyState === 'complete' ? 'COMPLETE' : (storyState === 'combatTwo' ? 'RELAY AMBUSH' : (storyState === 'relay' || storyState === 'relayDialogue' ? 'THE RELAY' : 'THE MARGIN'));
-    const inCombat = storyState === 'combatOne' || storyState === 'combatTwo';
-    targetLabelEl.textContent = inCombat ? 'CONTACTS' : (storyState === 'relay' ? 'RELAY' : 'SIGNAL');
-    targetCountEl.textContent = inCombat ? `${storyKills} / ${storyKillsRequired}` : (storyState === 'extract' ? 'EXIT' : '---');
+    if (chapterOne) {
+      const labels = {
+        waking:'ARRIVAL', introDialogue:'ARRIVAL', wrongPageWalk:'UNFINISHED STREET', firstChoice:'MARA', bridgeApproach:'BROKEN CROSSING', bridgeFight:'CORRECTORS', correction:'CORRECTION ZONE', finalRun:'RUN', endingDialogue:'EXIT', complete:'COMPLETE'
+      };
+      roundCountEl.textContent = labels[storyState] || 'WRONG PAGE';
+      const inCombat = (storyState === 'bridgeFight' || storyState === 'correction') && roundState === 'active';
+      targetLabelEl.textContent = inCombat ? 'CONTACTS' : 'SIGNAL';
+      targetCountEl.textContent = inCombat ? `${storyKills} / ${storyKillsRequired}` : '---';
+    } else {
+      roundCountEl.textContent = storyState === 'complete' ? 'COMPLETE' : (storyState === 'combatTwo' ? 'RELAY AMBUSH' : (storyState === 'relay' || storyState === 'relayDialogue' ? 'THE RELAY' : 'THE MARGIN'));
+      const inCombat = storyState === 'combatOne' || storyState === 'combatTwo';
+      targetLabelEl.textContent = inCombat ? 'CONTACTS' : (storyState === 'relay' ? 'RELAY' : 'SIGNAL');
+      targetCountEl.textContent = inCombat ? `${storyKills} / ${storyKillsRequired}` : (storyState === 'extract' ? 'EXIT' : '---');
+    }
+    arenaObjectiveEl?.classList.remove('active');
     return;
   }
   const def = ROUND_DEFINITIONS[currentRoundIndex];
@@ -1625,8 +2329,8 @@ function updateRoundHud() {
   pageCountEl.textContent = pageNumber;
   roundLabelEl.textContent = 'ROUND';
   roundCountEl.textContent = `${currentRoundIndex + 1} / ${ROUND_DEFINITIONS.length}`;
-  targetLabelEl.textContent = 'THREATS';
-  targetCountEl.textContent = `${roundKills} / ${def.queue.length}`;
+  targetLabelEl.textContent = arenaObjective ? 'OBJECTIVE' : 'THREATS';
+  targetCountEl.textContent = arenaObjective ? arenaObjective.label : `${roundKills} / ${def.queue.length}`;
 }
 
 function resetRunToBoot() {
@@ -1644,7 +2348,21 @@ function resetRunToBoot() {
 
   enemies.forEach(deactivateEnemy);
   clearDynamicStructures();
+  clearArenaObjectiveVisuals();
+  arenaObjective = null;
   activeArtist = null;
+  upgradeChoosing = false;
+  upgradeChoices = [];
+  upgradeScreenEl?.classList.remove('visible');
+  inkTotal = 0;
+  resetUpgradeState();
+  storyBridgeBuilt = false;
+  if (storyBridgeBarrier) { storyBridgeBarrier.visible = true; restoreColliderForMesh(storyBridgeBarrier); }
+  storyNotes.forEach(n => n.read = false);
+  nearbyStoryNote = null;
+  explosiveBarrels.forEach(b => { b.userData.hp = 42; b.userData.exploded = false; b.visible = true; restoreColliderForMesh(b); });
+  breakableWalls.forEach(w => { w.userData.hp = 125; w.visible = true; restoreColliderForMesh(w); });
+  eraserCovers.forEach(e => { e.erased = false; e.cover.visible = true; restoreColliderForMesh(e.cover); });
   storyState = 'boot';
   storyStage = 0;
   storyNextAt = 0;
@@ -1659,6 +2377,10 @@ function resetRunToBoot() {
   storyDialogueOnComplete = null;
   storyWakeStartedAt = 0;
   storyWakeOpening = false;
+  storySetpieceStage = 0;
+  storyChoiceResolved = false;
+  storyFlags = { trustedMara:false, ignoredMara:false, relayTouched:false, answeredUnknown:false };
+  storyCheckpoint.copy(selectedStoryChapter === 1 ? STORY_ONE_SPAWN : STORY_SPAWN);
   storyWakeOverlayEl.classList.remove('visible', 'opening');
   storyDialogueScreenEl.classList.remove('visible');
   document.body.classList.remove('story-dialogue-open');
@@ -1676,7 +2398,7 @@ function resetRunToBoot() {
   roundWarmupUntil = 0;
   roundBannerHideAt = 0;
 
-  if (gameMode === 'story') camera.position.set(STORY_X, STAND_EYE_HEIGHT, 20);
+  if (gameMode === 'story') camera.position.copy(selectedStoryChapter === 1 ? STORY_ONE_SPAWN : STORY_SPAWN);
   else camera.position.set(0, STAND_EYE_HEIGHT, 16);
   camera.fov = userBaseFov;
   camera.updateProjectionMatrix();
@@ -1691,7 +2413,7 @@ function resetRunToBoot() {
   dashReadyAt = 0;
   isSprinting = false;
   stamina = 100;
-  playerHealth = 100;
+  playerHealth = playerMaxHealth;
   playerInvulnerableUntil = 0;
 
   unlockedWeapons.clear();
@@ -1719,6 +2441,7 @@ function resetRunToBoot() {
 
   updateAmmoHud();
   updateHealthHud();
+  updateInkHud();
   updateRoundHud();
   staminaFill.style.transform = 'scaleX(1)';
   staminaValue.textContent = '100';
@@ -1729,7 +2452,7 @@ function resetRunToBoot() {
 
 
 function refillBetweenRounds() {
-  playerHealth = Math.min(100, playerHealth + 28);
+  playerHealth = Math.min(playerMaxHealth, playerHealth + 28);
   playerInvulnerableUntil = performance.now() + 1500;
   updateHealthHud();
   refillUnlockedWeaponAmmo(.28);
@@ -1742,44 +2465,46 @@ function startRound(roundNumber) {
   roundSpawned = 0;
   roundKills = 0;
   enemies.forEach(deactivateEnemy);
+  clearArenaObjectiveVisuals();
+  arenaObjective = null;
 
   if (currentRoundIndex === 0 && pageNumber === 1) {
-    playerHealth = 100;
+    playerHealth = playerMaxHealth;
     playerInvulnerableUntil = performance.now() + 2200;
   } else {
     refillBetweenRounds();
   }
 
   if (def.unlock) unlockWeapon(def.unlock, true);
-  updateRoundHud();
   redrawArenaForRound(currentRoundIndex, 0);
+  beginArenaObjective();
+  updateRoundHud();
   roundWarmupUntil = performance.now() + (currentRoundIndex === 4 ? 1900 : 1350);
-  showRoundBanner(`PAGE ${pageNumber}`, `ROUND ${currentRoundIndex + 1} // ${def.title}`, def.subtitle, currentRoundIndex === 4 ? 2600 : 2100);
+  showRoundBanner(`PAGE ${pageNumber}`, `ROUND ${currentRoundIndex + 1} // ${def.title}`, `${arenaObjective.label} // ${arenaObjective.text}`, currentRoundIndex === 4 ? 2600 : 2200);
   playRoundStinger('round');
 }
 
 function finishCurrentRound(now) {
   if (roundState !== 'active') return;
-  roundState = 'intermission';
+  roundState = 'reward';
   triggerHeld = false;
   isAiming = false;
   rightMouseDown = false;
+  enemies.forEach(deactivateEnemy);
+  clearArenaObjectiveVisuals();
   playRoundStinger('complete');
   const lastRound = currentRoundIndex === ROUND_DEFINITIONS.length - 1;
-  if (lastRound) {
-    showRoundBanner(`PAGE ${pageNumber}`, 'PAGE COMPLETE', `${totalKills} TOTAL TARGETS ERASED // NEXT PAGE GETS TOUGHER`, 3600);
-    nextRoundAt = now + 4300;
-  } else {
-    const next = currentRoundIndex + 2;
-    const nextDef = ROUND_DEFINITIONS[currentRoundIndex + 1];
-    showRoundBanner(`ROUND ${currentRoundIndex + 1} COMPLETE`, `NEXT // ROUND ${next}`, nextDef.subtitle, 2800);
-    nextRoundAt = now + 3300;
-  }
+  if (lastRound) showRoundBanner(`PAGE ${pageNumber}`, 'PAGE COMPLETE', `${totalKills} TOTAL TARGETS ERASED // REDRAW YOURSELF`, 2400);
+  else showRoundBanner(`ROUND ${currentRoundIndex + 1} COMPLETE`, '+ INK // UPGRADE AVAILABLE', 'CHOOSE WHAT TO DRAW BEFORE THE NEXT ROUND', 2200);
+  setTimeout(() => {
+    if (gameMode === 'arena' && roundState === 'reward') openUpgradeDraft();
+  }, 650);
 }
 
 function updateRoundProgression(now) {
   if (roundBannerEl.classList.contains('visible') && now >= roundBannerHideAt) roundBannerEl.classList.remove('visible');
-  if (!controls.isLocked || gameMode !== 'arena') return;
+  if (gameMode !== 'arena') return;
+  if (!controls.isLocked && !upgradeChoosing) return;
 
   if (roundState === 'warmup' && now >= roundWarmupUntil) {
     roundState = 'active';
@@ -1787,8 +2512,6 @@ function updateRoundProgression(now) {
     spawnNextEnemies(now);
   } else if (roundState === 'active') {
     spawnNextEnemies(now);
-    const def = ROUND_DEFINITIONS[currentRoundIndex];
-    if (roundKills >= def.queue.length && activeEnemyCount() === 0) finishCurrentRound(now);
   } else if (roundState === 'intermission' && now >= nextRoundAt) {
     if (currentRoundIndex >= ROUND_DEFINITIONS.length - 1) {
       pageNumber += 1;
@@ -1821,6 +2544,18 @@ function renderStoryDialoguePage() {
   storyScreenSpeakerEl.textContent = line.speaker || 'MARA';
   storyScreenTextEl.textContent = line.text || '';
   storyDialogueProgressEl.textContent = `${storyDialogueIndex + 1} / ${storyDialogueQueue.length}`;
+  storyChoiceListEl.innerHTML = '';
+  const hasChoices = !!line.choices?.length;
+  storyDialogueScreenEl.querySelector('.story-dialogue-sheet')?.classList.toggle('has-choices', hasChoices);
+  if (storyDialogueContinueEl) storyDialogueContinueEl.textContent = hasChoices ? 'PRESS 1 / 2 TO CHOOSE' : 'SPACE / ENTER // CONTINUE';
+  if (hasChoices) {
+    line.choices.forEach((choice,i)=>{
+      const div=document.createElement('div');
+      div.className='story-choice';
+      div.innerHTML=`<b>${i+1}</b>${choice.label}`;
+      storyChoiceListEl.appendChild(div);
+    });
+  }
 }
 
 function showStoryDialogueSequence(lines, onComplete = null) {
@@ -1842,33 +2577,59 @@ function showStoryDialogueSequence(lines, onComplete = null) {
   renderStoryDialoguePage();
 }
 
-function advanceStoryDialogue() {
+function chooseStoryDialogueChoice(index) {
   if (!storyDialogueBlocking) return;
+  const line=storyDialogueQueue[storyDialogueIndex];
+  const choice=line?.choices?.[index];
+  if(!choice) return;
+  choice.onChoose?.();
+  storyChoiceResolved=true;
   storyDialogueIndex += 1;
   if (storyDialogueIndex < storyDialogueQueue.length) {
     renderStoryDialoguePage();
-    playTone(420, 520, .045, .009, 'triangle');
+    playTone(420,520,.045,.009,'triangle');
     return;
   }
+  finishStoryDialogueSequence();
+}
+
+function finishStoryDialogueSequence() {
   const done = storyDialogueOnComplete;
   storyDialogueBlocking = false;
   storyInputLocked = false;
   storyDialogueQueue = [];
   storyDialogueIndex = 0;
   storyDialogueOnComplete = null;
+  storyChoiceListEl.innerHTML='';
   storyDialogueScreenEl.classList.remove('visible');
   document.body.classList.remove('story-dialogue-open');
   controls.pointerSpeed = Number(sensitivitySetting?.value || .78);
   done?.();
 }
 
+function advanceStoryDialogue() {
+  if (!storyDialogueBlocking) return;
+  const line=storyDialogueQueue[storyDialogueIndex];
+  if(line?.choices?.length) return;
+  storyDialogueIndex += 1;
+  if (storyDialogueIndex < storyDialogueQueue.length) {
+    renderStoryDialoguePage();
+    playTone(420, 520, .045, .009, 'triangle');
+    return;
+  }
+  finishStoryDialogueSequence();
+}
+
 function storySpawnIsSafe(point, radius = .62) {
   if (!point || point.length < 2) return false;
-  const [x, z] = point;
-  const hx = STORY_SIZE_X / 2 - 1.4;
-  const hz = STORY_SIZE_Z / 2 - 1.4;
-  if (x < STORY_X - hx || x > STORY_X + hx || z < STORY_Z - hz || z > STORY_Z + hz) return false;
-  return enemyCanMoveAt(x, z, radius);
+  const [x,z]=point;
+  const cx=selectedStoryChapter===1?STORY_ONE_X:STORY_X;
+  const cz=selectedStoryChapter===1?STORY_ONE_Z:STORY_Z;
+  const sx=selectedStoryChapter===1?STORY_ONE_SIZE_X:STORY_SIZE_X;
+  const sz=selectedStoryChapter===1?STORY_ONE_SIZE_Z:STORY_SIZE_Z;
+  const hx=sx/2-1.4, hz=sz/2-1.4;
+  if(x<cx-hx||x>cx+hx||z<cz-hz||z>cz+hz) return false;
+  return enemyCanMoveAt(x,z,radius);
 }
 
 function findSafeStorySpawn(preferred, occupied = []) {
@@ -1884,10 +2645,11 @@ function findSafeStorySpawn(preferred, occupied = []) {
   }
 
   // Hand-authored fallback positions in the open central street.
+  const storyCx = selectedStoryChapter === 1 ? STORY_ONE_X : STORY_X;
   candidates.push(
-    [STORY_X - 4.5, -13.8], [STORY_X + 3.8, -14.4],
-    [STORY_X - 1.8, -19.6], [STORY_X + 3.0, -21.0],
-    [STORY_X - 5.8, -17.0], [STORY_X + 5.0, -16.0]
+    [storyCx - 4.5, -13.8], [storyCx + 3.8, -14.4],
+    [storyCx - 1.8, -19.6], [storyCx + 3.0, -21.0],
+    [storyCx - 5.8, -17.0], [storyCx + 5.0, -16.0]
   );
 
   return candidates.find(candidate => {
@@ -1896,7 +2658,7 @@ function findSafeStorySpawn(preferred, occupied = []) {
     // Don't place an enemy directly on top of the player during a scripted ambush.
     if (Math.hypot(camera.position.x - candidate[0], camera.position.z - candidate[1]) < 4.0) return false;
     return true;
-  }) || [STORY_X, -18 - occupied.length * 2.5];
+  }) || [(selectedStoryChapter === 1 ? STORY_ONE_X : STORY_X), -18 - occupied.length * 2.5];
 }
 
 function activeStoryContactCount() {
@@ -1938,7 +2700,7 @@ function spawnStoryContacts(types = ['rifleman', 'rifleman'], points = null) {
   updateRoundHud();
 }
 
-function startStoryMode() {
+function startStoryChapterZero() {
   enemies.forEach(deactivateEnemy);
   clearDynamicStructures();
   bossHudEl.classList.remove('visible');
@@ -1949,11 +2711,15 @@ function startStoryMode() {
   storyKillsRequired = 0;
   storyCompletionAt = 0;
   roundState = 'story';
+  storyCheckpoint.copy(STORY_SPAWN);
+  storyWakeOverlayEl.querySelector('.wake-note span').textContent='CHAPTER ZERO';
+  storyWakeOverlayEl.querySelector('.wake-note b').textContent='MARGIN DISTRICT';
+  storyWakeOverlayEl.querySelector('.wake-note small').textContent='SIGNAL RECOVERING...';
   camera.position.copy(STORY_SPAWN);
   verticalOffset = 0;
   currentEyeHeight = STAND_EYE_HEIGHT;
   velocity.set(0, 0, 0);
-  playerHealth = 100;
+  playerHealth = playerMaxHealth;
   stamina = 100;
   playerInvulnerableUntil = performance.now() + 4200;
   setStoryMarker(STORY_SIGNAL, false);
@@ -1969,7 +2735,7 @@ function startStoryMode() {
   updateRoundHud();
 }
 
-function updateStoryMode(now, dt) {
+function updateStoryChapterZero(now, dt) {
   if (gameMode !== 'story' || !controls.isLocked || storyState === 'boot') return;
 
   if (storyMarker?.visible) {
@@ -2009,6 +2775,7 @@ function updateStoryMode(now, dt) {
     const dist = Math.hypot(camera.position.x - STORY_SIGNAL.x, camera.position.z - STORY_SIGNAL.z);
     if (dist < 2.25) {
       setStoryMarker(STORY_SIGNAL, false);
+      setStoryCheckpoint(new THREE.Vector3(STORY_X, STAND_EYE_HEIGHT, -1.5), 'SIGNAL MARK');
       storyState = 'signalDialogue';
       showStoryDialogueSequence([
         { kicker: 'SIGNAL MARK // ACTIVE', speaker: 'MARA', text: 'Stop. Two figures ahead.' },
@@ -2024,8 +2791,9 @@ function updateStoryMode(now, dt) {
     if (storyKills >= storyKillsRequired && activeStoryContactCount() === 0) {
       storyState = 'relay';
       roundState = 'story';
+      setStoryCheckpoint(new THREE.Vector3(STORY_X, STAND_EYE_HEIGHT, -6), 'CONTACTS CLEARED');
       setStoryMarker(STORY_RELAY, true);
-      playerHealth = Math.min(100, playerHealth + 25);
+      playerHealth = Math.min(playerMaxHealth, playerHealth + 25);
       updateHealthHud();
       showStoryDialogueSequence([
         { kicker: 'CONTACTS // ERASED', speaker: 'MARA', text: 'Good. They broke apart when you hit them. Like the page could not decide what shape they were supposed to keep.' },
@@ -2038,6 +2806,7 @@ function updateStoryMode(now, dt) {
     const dist = Math.hypot(camera.position.x - STORY_RELAY.x, camera.position.z - STORY_RELAY.z);
     if (dist < 2.1) {
       setStoryMarker(STORY_RELAY, false);
+      setStoryCheckpoint(new THREE.Vector3(STORY_RELAY.x - 1.8, STAND_EYE_HEIGHT, STORY_RELAY.z + 1.8), 'RELAY');
       storyState = 'relayDialogue';
       showStoryDialogueSequence([
         { kicker: 'RELAY // PARTIAL SIGNAL', speaker: 'MARA', text: 'I have it. There is another signal underneath mine.' },
@@ -2061,7 +2830,7 @@ function updateStoryMode(now, dt) {
       storyState = 'extract';
       roundState = 'story';
       setStoryMarker(STORY_EXTRACTION, true);
-      playerHealth = Math.min(100, playerHealth + 30);
+      playerHealth = Math.min(playerMaxHealth, playerHealth + 30);
       updateHealthHud();
       showStoryDialogueSequence([
         { kicker: 'RELAY // FAILING', speaker: 'MARA', text: 'The relay is burning itself out. I copied what I could.' },
@@ -2083,6 +2852,7 @@ function updateStoryMode(now, dt) {
         { speaker: 'MARA', text: 'Borrowed line.' },
         { kicker: 'CHAPTER ZERO // COMPLETE', speaker: 'MARA', text: 'This was only the margin. Whatever is on the next page already knows you are here.' }
       ], () => {
+        saveStoryProgress(1);
         storyState = 'complete';
         storyCompletionAt = performance.now() + 2200;
         storyObjectiveTextEl.textContent = 'CHAPTER ZERO COMPLETE';
@@ -2100,11 +2870,140 @@ function updateStoryMode(now, dt) {
   }
 }
 
+function setStoryCheckpoint(position, note = 'CHECKPOINT') {
+  storyCheckpoint.copy(position);
+  showCombatMessage(`${note} // SAVED`, 650);
+  try { localStorage.setItem(`inkbreak_checkpoint_${selectedStoryChapter}`, JSON.stringify([position.x, position.y, position.z])); } catch {}
+}
+
+function startStoryChapterOne() {
+  enemies.forEach(deactivateEnemy);
+  clearDynamicStructures();
+  bossHudEl.classList.remove('visible');
+  roundBannerEl.classList.remove('visible');
+  storyState='waking'; storyStage=0; storyKills=0; storyKillsRequired=0; storyCompletionAt=0; roundState='story'; storySetpieceStage=0; storyBridgeBuilt=false;
+  camera.position.copy(STORY_ONE_SPAWN); storyCheckpoint.copy(STORY_ONE_SPAWN);
+  verticalOffset=0; currentEyeHeight=STAND_EYE_HEIGHT; velocity.set(0,0,0); playerHealth=playerMaxHealth; stamina=100;
+  playerInvulnerableUntil=performance.now()+4200; setStoryMarker(STORY_ONE_FIRST_MARK,false); storyHudEl.classList.add('visible'); storyObjectiveTextEl.textContent='WAKE UP';
+  storyWakeStartedAt=performance.now(); storyWakeOpening=false; storyInputLocked=true; controls.pointerSpeed=0;
+  storyWakeOverlayEl.querySelector('.wake-note span').textContent='CHAPTER ONE';
+  storyWakeOverlayEl.querySelector('.wake-note b').textContent='WRONG PAGE';
+  storyWakeOverlayEl.querySelector('.wake-note small').textContent='PAGE BOUNDARY FAILED...';
+  storyWakeOverlayEl.classList.remove('opening'); storyWakeOverlayEl.classList.add('visible');
+  updateHealthHud(); updateRoundHud();
+}
+
+function updateStoryChapterOne(now,dt) {
+  if(gameMode!=='story'||selectedStoryChapter!==1||!controls.isLocked||storyState==='boot') return;
+  if(storyMarker?.visible){storyMarker.rotation.y+=dt*.72;const pulse=1+Math.sin(now*.004)*.06;storyMarker.scale.set(pulse,1,pulse);}
+
+  if(storyState==='waking'){
+    const elapsed=now-storyWakeStartedAt;
+    if(!storyWakeOpening&&elapsed>520){storyWakeOpening=true;storyWakeOverlayEl.classList.add('opening');playNoiseBurst(.012,.42,1350);}
+    if(elapsed>2800){
+      storyState='introDialogue'; storyWakeOverlayEl.classList.remove('visible','opening');
+      showStoryDialogueSequence([
+        {kicker:'CHAPTER ONE // WRONG PAGE',speaker:'MARA',text:'You made it across. I was not sure the exit mark would still lead anywhere.'},
+        {speaker:'YOU',text:'This place looks unfinished.'},
+        {speaker:'MARA',text:'Because it is. Roads stop. Buildings forget their roofs. Stay on the blue lines and do not touch anything white.'},
+        {speaker:'UNKNOWN',text:'...borrowed line... return before correction...'}
+      ],()=>{storyState='wrongPageWalk';storyObjectiveTextEl.textContent='FOLLOW THE UNFINISHED STREET';setStoryMarker(STORY_ONE_FIRST_MARK,true);showStoryDialogue('MARA // RADIO','Keep moving. I am losing the edge of your signal.','FOLLOW THE UNFINISHED STREET');});
+    }
+    return;
+  }
+  if(storyDialogueBlocking) return;
+
+  if(storyState==='wrongPageWalk'){
+    if(Math.hypot(camera.position.x-STORY_ONE_FIRST_MARK.x,camera.position.z-STORY_ONE_FIRST_MARK.z)<2.2){
+      setStoryMarker(STORY_ONE_FIRST_MARK,false); storyState='firstChoice'; setStoryCheckpoint(new THREE.Vector3(STORY_ONE_X-4,STAND_EYE_HEIGHT,12),'STREET MARK');
+      showStoryDialogueSequence([
+        {kicker:'RADIO LINK // UNSTABLE',speaker:'MARA',text:'There is a relay shortcut ahead. Do not activate it. I think the signal underneath mine is using them to map you.',choices:[
+          {label:'LISTEN TO MARA // take the long way',onChoose:()=>{storyFlags.trustedMara=true;}},
+          {label:'ACTIVATE IT ANYWAY // learn what is calling you',onChoose:()=>{storyFlags.ignoredMara=true;storyFlags.relayTouched=true;}}
+        ]},
+        {speaker:'YOU',text:'Either way, I need a path across that gap.'}
+      ],()=>{storyState='bridgeApproach';storyObjectiveTextEl.textContent='REACH THE BROKEN CROSSING';setStoryMarker(STORY_ONE_BRIDGE_SWITCH,true);});
+    }
+  } else if(storyState==='bridgeApproach'){
+    const d=Math.hypot(camera.position.x-STORY_ONE_BRIDGE_SWITCH.x,camera.position.z-STORY_ONE_BRIDGE_SWITCH.z);
+    if(d<2.1){
+      setStoryMarker(STORY_ONE_BRIDGE_SWITCH,false); buildStoryBridge(); storySetpieceStage=1;
+      // White correction walls draw behind the player to create a real chase beat.
+      dynamicDrawStartedAt=performance.now();
+      for(let i=0;i<4;i++) dynamicBox({x:STORY_ONE_X+(i-1.5)*3.0,y:1.6,z:4.8,w:2.7,h:3.2,d:.5,shade:false});
+      showStoryDialogueSequence([
+        {kicker:'PAGE EVENT // REDRAW',speaker:'MARA',text:storyFlags.ignoredMara?'You touched it. The signal just found us. Run.':'The page is drawing a bridge by itself. I did not ask it to do that.'},
+        {speaker:'UNKNOWN',text:storyFlags.ignoredMara?'You are easier to see now.':'The line remembers the hand.'},
+        {speaker:'MARA',text:'Across the bridge. Move before the correction catches up.'}
+      ],()=>{storyState='bridgeFight';storyObjectiveTextEl.textContent='CROSS THE BRIDGE // ERASE CORRECTORS';spawnStoryContacts(['corrector','corrector','sniper'],[[STORY_ONE_X-3,-10],[STORY_ONE_X+5,-12],[STORY_ONE_X,-18]]);playRoundStinger('round');});
+    }
+  } else if(storyState==='bridgeFight'){
+    if(storyKills>=storyKillsRequired&&activeStoryContactCount()===0){
+      roundState='story'; storyState='correction'; setStoryCheckpoint(new THREE.Vector3(STORY_ONE_X,STAND_EYE_HEIGHT,-10),'BRIDGE');
+      showStoryDialogueSequence([
+        {kicker:'CONTACTS // ERASED',speaker:'MARA',text:'Those were different. Cleaner outlines. Deliberate.'},
+        {speaker:'YOU',text:'They were trying to push me back.'},
+        {speaker:'MARA',text:'Correctors. That is what the old notes called them. They erase things that do not belong.'},
+        {speaker:'YOU',text:'And I do not belong.'},
+        {speaker:'UNKNOWN',text:'Ask her where she is broadcasting from.',choices:[
+          {label:'IGNORE IT // stay with Mara',onChoose:()=>{storyFlags.trustedMara=true;}},
+          {label:'ANSWER // ask where Mara really is',onChoose:()=>{storyFlags.answeredUnknown=true;}}
+        ]}
+      ],()=>{storyObjectiveTextEl.textContent='ENTER THE CORRECTION ZONE';setStoryMarker(STORY_ONE_CORRECTION,true);roundState='story';});
+    }
+  } else if(storyState==='correction'){
+    const d=Math.hypot(camera.position.x-STORY_ONE_CORRECTION.x,camera.position.z-STORY_ONE_CORRECTION.z);
+    if(roundState==='story'&&d<2.2){
+      setStoryMarker(STORY_ONE_CORRECTION,false); spawnStoryContacts(['heavy','corrector','corrector'],[[STORY_ONE_X-6,-20],[STORY_ONE_X+5,-21],[STORY_ONE_X+1,-24]]); roundState='active'; storyKills=0;
+      showRoundBanner('CHAPTER ONE','CORRECTION IN PROGRESS','SURVIVE // THE PAGE WANTS YOU GONE',2100);
+    } else if(roundState==='active'&&storyKills>=storyKillsRequired&&activeStoryContactCount()===0){
+      roundState='story'; storyState='finalRun'; setStoryMarker(STORY_ONE_EXIT,true); playerHealth=Math.min(playerMaxHealth,playerHealth+35);updateHealthHud();
+      showStoryDialogueSequence([
+        {kicker:'CORRECTION // FAILED',speaker:'UNKNOWN',text:'You break clean lines into pieces.'},
+        {speaker:'MARA',text:'Do not answer it. Exit mark is ahead.'},
+        {speaker:'UNKNOWN',text:'Mara is not where she says she is.'}
+      ],()=>{storyObjectiveTextEl.textContent='REACH THE EXIT MARK';});
+    }
+  } else if(storyState==='finalRun'){
+    if(Math.hypot(camera.position.x-STORY_ONE_EXIT.x,camera.position.z-STORY_ONE_EXIT.z)<2.25){
+      setStoryMarker(STORY_ONE_EXIT,false); storyState='endingDialogue'; playRoundStinger('complete');
+      showStoryDialogueSequence([
+        {kicker:'CHAPTER ONE // EXIT MARK',speaker:'YOU',text:'It said you are not where you say you are.'},
+        {speaker:'MARA',text:storyFlags.answeredUnknown?'I heard you ask. I cannot tell you where I am yet. Not over a line it can hear.':(storyFlags.trustedMara?'Then keep trusting the voice that got you this far. I will explain when I can.':'You chose to listen to it once. Be careful what that makes possible.')},
+        {speaker:'MARA',text:'The next page has a name scratched into every wall: CORRECTIONS.'},
+        {speaker:'UNKNOWN',text:'You called the Artist a monster. The page called it repair.'},
+        {kicker:'CHAPTER ONE // COMPLETE',speaker:'UNKNOWN',text:'See you in the draft.'}
+      ],()=>{saveStoryProgress(2);storyState='complete';storyCompletionAt=performance.now()+2400;storyObjectiveTextEl.textContent='CHAPTER ONE COMPLETE';showRoundBanner('STORY MODE','CHAPTER ONE COMPLETE','WRONG PAGE // END',2300);updateRoundHud();});
+    }
+  } else if(storyState==='complete'&&storyCompletionAt&&now>=storyCompletionAt){
+    storyCompletionAt=0;gameStarted=false;document.body.classList.add('front-menu');document.body.classList.remove('story-mode');controls.unlock();showMenuPanel('main',false);
+  }
+}
+
+function startStoryMode() {
+  if(selectedStoryChapter===1) startStoryChapterOne(); else startStoryChapterZero();
+}
+
+function updateStoryMode(now,dt) {
+  if(selectedStoryChapter===1) updateStoryChapterOne(now,dt); else updateStoryChapterZero(now,dt);
+}
+
 function combatIsActive() {
-  return controls.isLocked && ((gameMode === 'arena' && roundState === 'active') || (gameMode === 'story' && (storyState === 'combatOne' || storyState === 'combatTwo')));
+  return controls.isLocked && ((gameMode === 'arena' && roundState === 'active') || (gameMode === 'story' && ['combatOne','combatTwo','bridgeFight','correction'].includes(storyState) && roundState === 'active'));
+}
+
+function getEnemySquadContext() {
+  const active=enemies.filter(e=>e.alive&&!e.dying&&e.activeInRound);
+  return {
+    heavy:active.find(e=>e.type==='heavy'||e.type==='guardian'||e.type==='artist')||null,
+    sniper:active.find(e=>e.type==='sniper')||null,
+    rusher:active.find(e=>e.type==='rusher')||null,
+    flankers:active.filter(e=>e.type==='flanker')
+  };
 }
 
 function updateEnemies(now, dt) {
+  const squad = getEnemySquadContext();
   enemies.forEach(enemy => {
     if (enemy.dying) {
       const t = THREE.MathUtils.clamp((now - enemy.deathStart) / enemy.deathDuration, 0, 1);
@@ -2144,13 +3043,22 @@ function updateEnemies(now, dt) {
 
     if (combatIsActive()) {
       if (cfg.behavior === 'rusher') {
-        if (dist > 1.45) moveEnemyToward(enemy, target, dt, cfg.speed);
+        const pressureBoost = squad.sniper ? 1.18 : 1;
+        if (dist > 1.45) moveEnemyToward(enemy, target, dt, cfg.speed * pressureBoost);
       } else if (cfg.behavior === 'flanker') {
         camera.getWorldDirection(forward);
         forward.y = 0; forward.normalize();
         right.crossVectors(forward, camera.up).normalize();
-        const flankTarget = target.clone().addScaledVector(right, enemy.flankSide * 7.5).addScaledVector(forward, -4.5);
+        const side = squad.flankers.length > 1 ? (enemy.index % 2 ? 1 : -1) : enemy.flankSide;
+        const anchor = squad.heavy ? squad.heavy.navPosition.clone().lerp(target,.55) : target.clone();
+        const flankTarget = anchor.addScaledVector(right, side * 8.5).addScaledVector(forward, -4.5);
         if (enemy.navPosition.distanceTo(flankTarget) > 2.2) moveEnemyToward(enemy, flankTarget, dt, cfg.speed);
+      } else if (cfg.behavior === 'corrector') {
+        camera.getWorldDirection(forward); forward.y = 0; forward.normalize();
+        right.crossVectors(forward, camera.up).normalize();
+        const correctionSide = enemy.index % 2 ? 1 : -1;
+        const correctionTarget = target.clone().addScaledVector(right, correctionSide * 5.5).addScaledVector(forward, -7.0);
+        if (dist > 8.5 || !enemyHasLineOfSight(enemy,target)) moveEnemyToward(enemy, correctionTarget, dt, cfg.speed);
       } else if (cfg.behavior === 'artist') {
         const phase = enemy.bossPhase || 1;
         if (phase === 1) {
@@ -2170,12 +3078,13 @@ function updateEnemies(now, dt) {
           moveEnemyToward(enemy, flankTarget, dt, 2.45);
         }
       } else if (cfg.behavior === 'heavy' || cfg.behavior === 'guardian') {
-        if (dist > (cfg.behavior === 'guardian' ? 12 : 15)) moveEnemyToward(enemy, target, dt, cfg.speed);
+        const holdRange = cfg.behavior === 'guardian' ? 12 : (squad.rusher ? 17 : 13.5);
+        if (dist > holdRange) moveEnemyToward(enemy, target, dt, cfg.speed);
       } else if (cfg.behavior === 'rifleman') {
-        const swayTarget = enemy.origin.clone();
-        swayTarget.x += Math.sin(now * .00058 + enemy.phase) * 1.35;
-        swayTarget.z += Math.cos(now * .00043 + enemy.phase) * .45;
-        enemy.navPosition.lerp(swayTarget, Math.min(1, dt * 2));
+        const swayTarget = squad.heavy && squad.heavy !== enemy ? squad.heavy.navPosition.clone() : enemy.origin.clone();
+        swayTarget.x += Math.sin(now * .00058 + enemy.phase) * 1.7 + (enemy.index % 2 ? 2.1 : -2.1);
+        swayTarget.z += Math.cos(now * .00043 + enemy.phase) * .55 + 1.6;
+        if (enemyCanMoveAt(swayTarget.x,swayTarget.z)) enemy.navPosition.lerp(swayTarget, Math.min(1, dt * 1.65));
       }
     }
 
@@ -2249,8 +3158,8 @@ function updatePickups(now) {
     const dx = camera.position.x - p.group.position.x;
     const dz = camera.position.z - p.group.position.z;
     if (dx*dx + dz*dz < 1.6) {
-      if (p.type === 'health' && playerHealth < 100) {
-        playerHealth = Math.min(100, playerHealth + 35);
+      if (p.type === 'health' && playerHealth < playerMaxHealth) {
+        playerHealth = Math.min(playerMaxHealth, playerHealth + 35);
         updateHealthHud();
         showCombatMessage('+ HEALTH // 35');
         playPickupSound('health');
@@ -2638,8 +3547,8 @@ function refillUnlockedWeaponAmmo(fraction = .25) {
 }
 
 function updateHealthHud() {
-  healthFill.style.transform = `scaleX(${Math.max(0, playerHealth) / 100})`;
-  healthValue.textContent = Math.max(0, Math.round(playerHealth));
+  healthFill.style.transform = `scaleX(${THREE.MathUtils.clamp(Math.max(0, playerHealth) / Math.max(1, playerMaxHealth),0,1)})`;
+  healthValue.textContent = `${Math.max(0, Math.round(playerHealth))}${playerMaxHealth > 100 ? `/${playerMaxHealth}` : ''}`;
 }
 
 function startReload() {
@@ -2730,7 +3639,7 @@ const CHARGE_HAND_POS = new THREE.Vector3(.19, .08, .16);
 function updateReloadAnimation(now) {
   if (!isReloading) return false;
 
-  const t = THREE.MathUtils.clamp((now - reloadStartAt) / (currentWeapon().reloadTime * 1000), 0, 1);
+  const t = THREE.MathUtils.clamp((now - reloadStartAt) / (currentWeapon().reloadTime * upgradeState.reloadMul * 1000), 0, 1);
   const poseIn = segment01(t, 0.00, 0.14);
   const poseOut = segment01(t, 0.84, 1.00);
   const pose = poseIn * (1 - poseOut);
@@ -2850,6 +3759,7 @@ function flashHitmarker(kill = false, headshot = false) {
 function damagePlayer(amount) {
   const now = performance.now();
   if (playerHealth <= 0 || now < playerInvulnerableUntil) return;
+  amount *= upgradeState.damageTakenMul;
   playerHealth = Math.max(0, playerHealth - amount);
   updateHealthHud();
   damageVignetteEl.classList.add('active');
@@ -2864,8 +3774,8 @@ function damagePlayer(amount) {
 
 function respawnPlayer() {
   if (gameMode === 'story') {
-    const checkpointZ = (storyState === 'combatOne' || storyState === 'relay' || storyState === 'relayDialogue' || storyState === 'combatTwo' || storyState === 'extract' || storyState === 'endingDialogue' || storyState === 'complete') ? -6 : 20;
-    camera.position.set(STORY_X, EYE_HEIGHT, checkpointZ);
+    camera.position.copy(storyCheckpoint);
+    camera.position.y = EYE_HEIGHT;
   } else {
     camera.position.set(0, EYE_HEIGHT, 16);
   }
@@ -2878,7 +3788,7 @@ function respawnPlayer() {
   dashTimer = 0;
   isAiming = false;
   rightMouseDown = false;
-  playerHealth = 100;
+  playerHealth = playerMaxHealth;
   playerInvulnerableUntil = performance.now() + 2200;
   const w = currentWeapon();
   if (!w.melee) {
@@ -3008,13 +3918,17 @@ function tryDash() {
   dashTimer = DASH_DURATION;
   isAiming = false;
   playMovementSound('dash');
-  dashReadyAt = now + DASH_COOLDOWN * 1000;
+  dashReadyAt = now + DASH_COOLDOWN * upgradeState.dashCooldownMul * 1000;
   stamina = Math.max(0, stamina - DASH_STAMINA_COST);
   sliding = false;
   crouching = false;
   velocity.x = dashDirection.x * DASH_SPEED;
   velocity.z = dashDirection.z * DASH_SPEED;
   impactFovKick = Math.max(impactFovKick, 3.5);
+  if (upgradeState.dashDamage) {
+    damageEnemiesInRadius(camera.position.clone(), 2.35, 54, null, false);
+    nextDashTrailTick = now + 45;
+  }
   movementNoteEl.classList.add('active');
 }
 
@@ -3071,9 +3985,15 @@ function updateMovement(dt) {
     const dashPower = DASH_SPEED * (.88 + .12 * (dashTimer / DASH_DURATION));
     velocity.x = dashDirection.x * dashPower;
     velocity.z = dashDirection.z * dashPower;
+    if (upgradeState.dashDamage && now >= nextDashTrailTick) {
+      nextDashTrailTick = now + 58;
+      damageEnemiesInRadius(camera.position.clone(), 1.65, 20, null, false);
+      spawnInkBurst(camera.position.clone().add(new THREE.Vector3(0,-.8,0)), 3, .15);
+    }
   } else if (sliding) {
     slideTimer = Math.max(0, slideTimer - dt);
-    slideSpeed = Math.max(0, slideSpeed - SLIDE_DECEL * dt);
+    const slideFriction = pointInInkPuddle(camera.position.x,camera.position.z) ? .55 : 1;
+    slideSpeed = Math.max(0, slideSpeed - SLIDE_DECEL * slideFriction * dt);
 
     if (moving) {
       const steered = slideDirection.clone().multiplyScalar(.92).addScaledVector(wish, .08).normalize();
@@ -3088,7 +4008,9 @@ function updateMovement(dt) {
       crouching = crouchHeld;
     }
   } else {
-    const maxSpeed = crouching ? CROUCH_SPEED : (isSprinting ? SPRINT_SPEED : WALK_SPEED);
+    const puddleBoost = pointInInkPuddle(camera.position.x,camera.position.z) ? 1.12 : 1;
+    const crossoutBoost = now < crossoutSpeedUntil ? 1.18 : 1;
+    const maxSpeed = (crouching ? CROUCH_SPEED : (isSprinting ? SPRINT_SPEED : WALK_SPEED)) * upgradeState.moveMul * puddleBoost * crossoutBoost;
     const accel = grounded ? GROUND_ACCEL : AIR_ACCEL;
     const targetX = wish.x * maxSpeed;
     const targetZ = wish.z * maxSpeed;
@@ -3102,7 +4024,7 @@ function updateMovement(dt) {
     }
   }
 
-  if (isSprinting) stamina = Math.max(0, stamina - 26 * dt);
+  if (isSprinting) stamina = Math.max(0, stamina - 26 * upgradeState.sprintDrainMul * dt);
   else if (dashTimer <= 0 && !sliding) stamina = Math.min(100, stamina + (moving ? 14 : 22) * dt);
 
   velocity.y -= GRAVITY * dt;
@@ -3241,6 +4163,7 @@ window.addEventListener('mousedown', (e) => {
   if (!controls.isLocked || storyInputLocked) return;
 
   if (e.button === 0) {
+    if (!triggerHeld) triggerHoldStartedAt = performance.now();
     triggerHeld = true;
     fireTestShot();
     return;
@@ -3255,7 +4178,7 @@ window.addEventListener('mousedown', (e) => {
 });
 
 window.addEventListener('mouseup', (e) => {
-  if (e.button === 0) triggerHeld = false;
+  if (e.button === 0) { triggerHeld = false; triggerHoldStartedAt = 0; }
   if (e.button === 2) {
     const heldFor = performance.now() - rightMouseDownAt;
     rightMouseDown = false;
@@ -3295,7 +4218,21 @@ function performKnifeAttack(now, w) {
   const hit = hits[0];
   const enemy = hit.object.userData.enemy;
   const part = hit.object.userData.hitPart || 'body';
-  const damage = part === 'head' ? w.headDamage : w.bodyDamage;
+  const canCrossout = enemy.hp / Math.max(1, enemy.maxHp) <= .25 && enemy.type !== 'artist';
+  if (canCrossout) {
+    enemy.crossoutExecution = true;
+    crossoutSpeedUntil = now + 1800;
+    playerHealth = Math.min(playerMaxHealth, playerHealth + 10 + upgradeState.knifeHeal);
+    stamina = Math.min(100, stamina + 20);
+    refillUnlockedWeaponAmmo(.05);
+    awardInk(15 + (upgradeState.knifeHeal > 0 ? 20 : 0), 'CROSSOUT');
+    updateHealthHud();
+    showCombatMessage('CROSSOUT // HEALTH + AMMO + SPEED', 760);
+    spawnInkBurst(hit.point, 24, .72);
+    damageEnemy(enemy, enemy.hp + 5, part, hit.point, raycaster.ray.direction);
+    return;
+  }
+  const damage = (part === 'head' ? w.headDamage * upgradeState.headshotMul : w.bodyDamage) * upgradeState.damageMul;
   damageEnemy(enemy, damage, part, hit.point, raycaster.ray.direction);
   spawnInkBurst(hit.point, part === 'head' ? 12 : 8, .42);
 }
@@ -3303,7 +4240,12 @@ function performKnifeAttack(now, w) {
 function fireTestShot() {
   const now = performance.now();
   const w = currentWeapon();
-  if (isReloading || playerHealth <= 0 || roundState === 'boot' || storyInputLocked || now - lastShotAt < w.fireInterval * 1000) return;
+  let interval = w.fireInterval / upgradeState.fireRateMul;
+  if (currentWeaponId === 'smg' && upgradeState.smgRamp && triggerHeld && triggerHoldStartedAt) {
+    const held = Math.min(2, (now - triggerHoldStartedAt) / 1000);
+    interval /= (1 + held * .34);
+  }
+  if (isReloading || playerHealth <= 0 || roundState === 'boot' || storyInputLocked || now - lastShotAt < interval * 1000) return;
   if (w.melee) {
     performKnifeAttack(now, w);
     return;
@@ -3316,6 +4258,7 @@ function fireTestShot() {
     return;
   }
 
+  const wasLastRound = ammoCurrent === 1;
   lastShotAt = now;
   ammoCurrent -= 1;
   syncCurrentWeaponAmmo();
@@ -3335,31 +4278,69 @@ function fireTestShot() {
   });
   const targets = [...liveEnemyMeshes, ...sketchMeshes];
 
+  const lowHealthBoost = upgradeState.lowHealthDamage && playerHealth / Math.max(1,playerMaxHealth) < .35 ? 1.30 : 1;
+  const lastWordBoost = upgradeState.lastWord && wasLastRound ? 4 : 1;
+  const baseRunMul = upgradeState.damageMul * lowHealthBoost * lastWordBoost;
   let hitAnyEnemy = false;
   const pellets = Math.max(1, w.pellets);
   for (let pellet = 0; pellet < pellets; pellet++) {
-    const effectiveSpread = isAiming ? w.spread * .22 : w.spread;
+    const effectiveSpread = (isAiming ? w.spread * .22 : w.spread) * upgradeState.spreadMul;
     const spreadX = (Math.random() - .5) * effectiveSpread;
     const spreadY = (Math.random() - .5) * effectiveSpread;
     raycaster.setFromCamera(new THREE.Vector2(spreadX, spreadY), camera);
     const hits = raycaster.intersectObjects(targets, false).filter(hit => hit.object.visible);
     if (!hits.length) continue;
 
+    // Ruler Rifle can punch through one extra hostile line.
+    if (currentWeaponId === 'rifle' && upgradeState.riflePenetration) {
+      const seen = new Set();
+      let damaged = 0;
+      for (const hit of hits) {
+        const enemy = hit.object.userData.enemy;
+        if (!enemy) {
+          if (damageEnvironment(hit.object, w.bodyDamage * baseRunMul, hit.point)) break;
+          if (damaged === 0) spawnWorldImpact(hit);
+          break;
+        }
+        if (!enemy.alive || seen.has(enemy)) continue;
+        seen.add(enemy); damaged++; hitAnyEnemy = true;
+        const part = hit.object.userData.hitPart || 'body';
+        const damage = (part === 'head' ? w.headDamage * upgradeState.headshotMul : w.bodyDamage) * baseRunMul * (damaged===2?.78:1);
+        damageEnemy(enemy, damage, part, hit.point, raycaster.ray.direction);
+        if (damaged >= 2) break;
+      }
+      continue;
+    }
+
     const hit = hits[0];
     const enemy = hit.object.userData.enemy;
     if (enemy && enemy.alive && enemy.activeInRound) {
       hitAnyEnemy = true;
       const part = hit.object.userData.hitPart || 'body';
-      const damage = part === 'head' ? w.headDamage : w.bodyDamage;
+      const damage = (part === 'head' ? w.headDamage * upgradeState.headshotMul : w.bodyDamage) * baseRunMul;
       damageEnemy(enemy, damage, part, hit.point, raycaster.ray.direction);
-    } else if (pellets === 1 || pellet < 3) {
-      spawnWorldImpact(hit);
+      if (currentWeaponId === 'marker' && upgradeState.markerSplash) damageEnemiesInRadius(hit.point, 3.4, damage * .62, enemy, true);
+    } else {
+      const envHit = damageEnvironment(hit.object, w.bodyDamage * baseRunMul, hit.point);
+      if (!envHit && currentWeaponId === 'shotgun' && upgradeState.shotgunRicochet) {
+        const normal = hit.face?.normal?.clone().transformDirection(hit.object.matrixWorld);
+        if (normal) {
+          const reflected = raycaster.ray.direction.clone().reflect(normal).normalize();
+          enemyRaycaster.set(hit.point.clone().addScaledVector(normal,.04), reflected);
+          enemyRaycaster.far = 12;
+          const bounceHits = enemyRaycaster.intersectObjects(liveEnemyMeshes,false).filter(h=>h.object.visible);
+          if (bounceHits.length) {
+            const bh=bounceHits[0], be=bh.object.userData.enemy;
+            if(be?.alive){const bp=bh.object.userData.hitPart||'body';const bd=(bp==='head'?w.headDamage*upgradeState.headshotMul:w.bodyDamage)*baseRunMul*.55;damageEnemy(be,bd,bp,bh.point,reflected);hitAnyEnemy=true;}
+          }
+        }
+      }
+      if (!envHit && (pellets === 1 || pellet < 3)) spawnWorldImpact(hit);
+      if (currentWeaponId === 'marker' && upgradeState.markerSplash) damageEnemiesInRadius(hit.point, 3.2, w.bodyDamage * baseRunMul * .45, null, true);
     }
   }
 
-  if (currentWeaponId === 'marker' && !hitAnyEnemy) {
-    showCombatMessage('MARKER // HEAVY STROKE', 260);
-  }
+  if (currentWeaponId === 'marker' && !hitAnyEnemy) showCombatMessage('MARKER // HEAVY STROKE', 260);
 }
 
 function spawnWorldImpact(hit) {
@@ -3419,8 +4400,11 @@ function animate(now) {
   updateAimState(now);
   updateMovement(dt);
   updateRoundProgression(now);
+  updateArenaObjective(now, dt);
   updateStoryMode(now, dt);
   updateDynamicStructures(now);
+  updateInteractiveEnvironment(now, dt);
+  updateStoryNotes();
   if (controls.isLocked && triggerHeld) fireTestShot();
   updateEnemies(now, dt);
   updateDeathChunks(now, dt);

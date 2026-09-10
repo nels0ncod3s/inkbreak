@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SKETCH//FIRE // Living Page Build</title>
+  <title>INKBREAK // Living Page Build</title>
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="./styles.css" />
   <script type="importmap">
     {
@@ -26,6 +27,7 @@
       <div class="status-row"><span id="round-label">ROUND</span><b id="round-count">1 / 5</b></div>
       <div class="status-row"><span id="target-label">THREATS</span><b id="target-count">0 / 3</b></div>
       <div class="status-row"><span>WEAPON</span><b id="weapon-name">SKETCH CARBINE</b></div>
+      <div class="status-row ink-row"><span>INK</span><b id="ink-count">000</b></div>
     </div>
 
     <div id="round-banner" aria-live="polite">
@@ -67,6 +69,13 @@
     </div>
 
     <div id="combat-message"></div>
+
+    <div id="arena-objective" aria-live="polite">
+      <span id="arena-objective-kicker">OBJECTIVE // ERASE</span>
+      <b id="arena-objective-text">CLEAR THE PAGE</b>
+      <div class="objective-meter"><div id="objective-fill"></div></div>
+      <small id="arena-objective-progress">0 / 3</small>
+    </div>
 
     <div id="story-hud" aria-live="polite">
       <div id="story-objective"><span>OBJECTIVE</span><b id="story-objective-text">FOLLOW THE SIGNAL</b></div>
@@ -131,7 +140,8 @@
       <h2 id="story-screen-speaker">MARA</h2>
       <p id="story-screen-text">If you can hear me, keep moving.</p>
       <div class="story-dialogue-progress" id="story-dialogue-progress">1 / 1</div>
-      <div class="story-dialogue-continue">SPACE / ENTER // CONTINUE</div>
+      <div id="story-choice-list"></div>
+      <div class="story-dialogue-continue" id="story-dialogue-continue">SPACE / ENTER // CONTINUE</div>
     </section>
   </div>
 
@@ -141,18 +151,36 @@
         <div class="tape tape-a"></div>
         <div class="tape tape-b"></div>
         <p class="eyebrow">BLUE INK // LIVING PAGE BUILD</p>
-        <h1 class="scribble-title" data-text="SKETCH//FIRE">SKETCH//FIRE</h1>
-        <p class="subtitle">Fight through a notebook that redraws itself around you. Survive five escalating rounds, unlock stranger weapons, and cross out The Artist.</p>
+        <h1 class="scribble-title" data-text="INKBREAK">INKBREAK</h1>
+        <p class="subtitle">Break the rules of a living notebook. Fight, redraw, upgrade, and survive pages that refuse to stay finished.</p>
 
         <div class="menu-actions">
           <button class="menu-primary" id="play-btn">ARENA MODE</button>
-          <button class="menu-primary story-button" id="story-btn">STORY MODE // PROLOGUE</button>
+          <button class="menu-primary story-button" id="story-btn">CONTINUE STORY</button>
+          <button class="menu-secondary" data-open-panel="chapters">CHAPTER SELECT</button>
           <button class="menu-secondary" data-open-panel="controls">CONTROLS</button>
           <button class="menu-secondary" data-open-panel="settings">SETTINGS</button>
         </div>
 
         <div class="menu-doodle" aria-hidden="true"><span></span><span></span><span></span></div>
-        <p class="footnote">ARENA: SKETCHYARD XL · STORY: CHAPTER ZERO // THE MARGIN · Mouse + keyboard</p>
+        <p class="footnote">ARENA: LIVING PAGE · STORY: THE BORROWED LINE · Mouse + keyboard</p>
+      </section>
+
+      <section class="sheet menu-panel" id="chapters-menu-panel" data-panel="chapters">
+        <div class="tape tape-a"></div>
+        <div class="tape tape-b"></div>
+        <p class="eyebrow">STORY // CHAPTER SELECT</p>
+        <h2>THE BORROWED LINE</h2>
+        <div class="chapter-list">
+          <button class="chapter-card" data-chapter="0">
+            <span>CHAPTER ZERO</span><b>THE MARGIN</b><small>Wake in Margin District and trace Mara's signal.</small>
+          </button>
+          <button class="chapter-card" data-chapter="1" id="chapter-one-card">
+            <span>CHAPTER ONE</span><b>WRONG PAGE</b><small>A half-finished city is already waiting for you.</small>
+          </button>
+        </div>
+        <p class="menu-note" id="chapter-progress-note">Complete Chapter Zero to unlock Wrong Page.</p>
+        <button class="menu-secondary menu-back" data-open-panel="main">← BACK</button>
       </section>
 
       <section class="sheet menu-panel" id="controls-menu-panel" data-panel="controls">
@@ -169,6 +197,7 @@
           <div><b>CTRL / C</b><span>crouch · sprint to slide</span></div>
           <div><b>Q</b><span>directional dash</span></div>
           <div><b>SPACE</b><span>jump · slide jump</span></div>
+          <div><b>E</b><span>read notes · interact</span></div>
         </div>
         <p class="menu-note">Ruler Rifle: hold RMB for the full scope. Other weapons lower into a clear focus sight so the gun no longer eats the center of your screen.</p>
         <button class="menu-secondary menu-back" data-open-panel="main">← BACK</button>
@@ -214,13 +243,25 @@
     </div>
   </div>
 
+  <div id="upgrade-screen" aria-live="polite">
+    <section class="upgrade-sheet">
+      <div class="tape tape-a"></div>
+      <div class="tape tape-b"></div>
+      <p class="eyebrow">FIELD NOTE // REDRAW YOURSELF</p>
+      <h2>CHOOSE WHAT TO DRAW</h2>
+      <p class="upgrade-copy">Spend Ink on one mutation. Your run keeps every upgrade until the page finally wins.</p>
+      <div id="upgrade-cards"></div>
+      <div class="upgrade-footer"><span id="upgrade-ink">INK // 000</span><small>PRESS 1 / 2 / 3 TO CHOOSE</small></div>
+    </section>
+  </div>
+
   <div id="mobile-gate" aria-live="polite">
     <section class="mobile-note">
       <div class="tape tape-a"></div>
       <div class="tape tape-b"></div>
-      <p class="eyebrow">SKETCH//FIRE // FIELD NOTICE</p>
+      <p class="eyebrow">INKBREAK // FIELD NOTICE</p>
       <h2>THIS PAGE NEEDS A BIGGER DESK.</h2>
-      <p>SKETCH//FIRE currently uses mouse-look, keyboard movement and desktop pointer-lock controls.</p>
+      <p>INKBREAK currently uses mouse-look, keyboard movement and desktop pointer-lock controls.</p>
       <strong>PLAY ON A LAPTOP OR DESKTOP</strong>
       <span>MOBILE VERSION // COMING SOON</span>
       <div class="mobile-scribble" aria-hidden="true"></div>
