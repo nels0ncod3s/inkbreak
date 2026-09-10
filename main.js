@@ -73,21 +73,22 @@ const chapterCards = [...document.querySelectorAll('.chapter-card')];
 
 
 // ---------- Mobile touch shell ----------
-const IS_TOUCH_DEVICE = window.matchMedia('(hover: none) and (pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+const IS_TOUCH_DEVICE = window.matchMedia('(pointer: coarse)').matches || navigator.userAgentData?.mobile === true || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 const mobileControlsEl = document.querySelector('#mobile-controls');
 const mobileJoystickEl = document.querySelector('#mobile-joystick');
 const mobileJoystickKnobEl = document.querySelector('#mobile-joystick-knob');
 const mobileLookZoneEl = document.querySelector('#mobile-look-zone');
 const mobileFireBtn = document.querySelector('#mobile-fire');
 const mobileAimBtn = document.querySelector('#mobile-aim');
+const mobileReloadBtn = document.querySelector('#mobile-reload');
 const mobileJumpBtn = document.querySelector('#mobile-jump');
 const mobileCrouchBtn = document.querySelector('#mobile-crouch');
 const mobileDashBtn = document.querySelector('#mobile-dash');
-const mobileSprintBtn = document.querySelector('#mobile-sprint');
 const mobileWeaponBtn = document.querySelector('#mobile-weapon');
 const mobileUseBtn = document.querySelector('#mobile-use');
 const mobilePauseBtn = document.querySelector('#mobile-pause');
 const mobileLandscapeBtn = document.querySelector('#mobile-landscape-btn');
+const mobileActionClusterEl = document.querySelector('#mobile-action-cluster');
 
 document.body.classList.toggle('touch-device', IS_TOUCH_DEVICE);
 if (IS_TOUCH_DEVICE) {
@@ -107,6 +108,10 @@ let mobileJoystickPointer = null;
 let mobileLookPointer = null;
 let mobileLookLastX = 0;
 let mobileLookLastY = 0;
+let mobileLookAccumX = 0;
+let mobileLookAccumY = 0;
+let mobileAimActive = false;
+let mobileCrouchLatched = false;
 
 function controlSessionActive() {
   return controls.isLocked || (IS_TOUCH_DEVICE && mobileSessionActive);
@@ -119,14 +124,19 @@ function clearMobileInputs() {
   mobileCrouchHeld = false;
   mobileJoystickPointer = null;
   mobileLookPointer = null;
+  mobileLookAccumX = 0;
+  mobileLookAccumY = 0;
+  mobileAimActive = false;
+  mobileCrouchLatched = false;
   triggerHeld = false;
   rightMouseDown = false;
   isAiming = false;
   mobileJoystickKnobEl?.style.setProperty('transform', 'translate(-50%, -50%)');
-  mobileSprintBtn?.classList.remove('pressed');
-  mobileCrouchBtn?.classList.remove('pressed');
+  mobileCrouchBtn?.classList.remove('pressed', 'latched');
+  mobileJoystickEl?.classList.remove('sprinting');
   mobileFireBtn?.classList.remove('pressed');
   mobileAimBtn?.classList.remove('pressed');
+  mobileReloadBtn?.classList.remove('pressed');
 }
 
 async function requestMobileLandscape() {
@@ -3996,6 +4006,8 @@ function switchWeaponBySlot(slot) {
   syncCurrentWeaponAmmo();
   cancelReload();
   triggerHeld = false;
+  mobileAimActive = false;
+  isAiming = false;
   currentWeaponId = id;
   ammoCurrent = weaponStates[id].ammo;
   ammoReserve = weaponStates[id].reserve;
@@ -4648,14 +4660,25 @@ function updateMovement(dt) {
 
 function updateAimState(now) {
   const canAim = controlSessionActive() && playerHealth > 0 && !isReloading && !sliding && dashTimer <= 0 && roundState !== 'boot' && !currentWeapon().melee && !storyInputLocked;
-  if (rightMouseDown && canAim && now - rightMouseDownAt >= AIM_HOLD_MS) {
-    if (!isAiming) {
-      isAiming = true;
-      rightMouseBecameAim = true;
+
+  if (IS_TOUCH_DEVICE) {
+    // Mobile gets a dedicated AIM toggle and a separate RELOAD button. Trying to
+    // distinguish tap-vs-hold on the same thumb control made the first touch build
+    // unreliable and needlessly hostile to actual humans.
+    if (!canAim) mobileAimActive = false;
+    isAiming = mobileAimActive && canAim;
+  } else {
+    if (rightMouseDown && canAim && now - rightMouseDownAt >= AIM_HOLD_MS) {
+      if (!isAiming) {
+        isAiming = true;
+        rightMouseBecameAim = true;
+      }
+    } else if (!rightMouseDown || !canAim) {
+      isAiming = false;
     }
-  } else if (!rightMouseDown || !canAim) {
-    isAiming = false;
   }
+
+  mobileAimBtn?.classList.toggle('pressed', IS_TOUCH_DEVICE && isAiming);
   document.body.classList.toggle('aiming', isAiming);
   const scoped = isAiming && currentWeaponId === 'rifle';
   document.body.classList.toggle('scoped', scoped);
@@ -4664,37 +4687,116 @@ function updateAimState(now) {
 
 
 // ---------- Mobile touch controls ----------
-function updateJoystickFromPointer(event) {
+// The touch layer deliberately keeps movement, camera look and action buttons as
+// independent multi-touch pointers. This is critical on phones: the left thumb can
+// move while the right thumb aims/fires without either gesture stealing the other.
+function mobileHaptic(ms = 8) {
+  try { navigator.vibrate?.(ms); } catch {}
+}
+
+function updateJoystickFromPoint(clientX, clientY) {
+  if (!mobileJoystickEl || !mobileJoystickKnobEl) return;
   const rect = mobileJoystickEl.getBoundingClientRect();
   const cx = rect.left + rect.width / 2;
   const cy = rect.top + rect.height / 2;
   const maxRadius = Math.min(rect.width, rect.height) * .34;
-  let dx = event.clientX - cx;
-  let dy = event.clientY - cy;
+  let dx = clientX - cx;
+  let dy = clientY - cy;
   const dist = Math.hypot(dx, dy);
-  if (dist > maxRadius) {
-    dx = dx / dist * maxRadius;
-    dy = dy / dist * maxRadius;
+  const dirX = dist > .001 ? dx / dist : 0;
+  const dirY = dist > .001 ? dy / dist : 0;
+  const visualDist = Math.min(dist, maxRadius);
+  const rawMagnitude = THREE.MathUtils.clamp(dist / maxRadius, 0, 1);
+
+  // Radial deadzone rather than independent X/Y deadzones. This makes diagonals
+  // feel natural and prevents the player slowly drifting while the thumb rests.
+  const DEADZONE = .12;
+  const magnitude = rawMagnitude <= DEADZONE
+    ? 0
+    : (rawMagnitude - DEADZONE) / (1 - DEADZONE);
+
+  mobileMoveX = dirX * magnitude;
+  mobileMoveY = -dirY * magnitude;
+
+  // Full-forward stick automatically sprints. This removes one permanent button
+  // from the left side and lets slide still work by tapping crouch at speed.
+  mobileSprintHeld = magnitude > .90 && mobileMoveY > .76 && Math.abs(mobileMoveX) < .78;
+
+  mobileJoystickKnobEl.style.transform = `translate(calc(-50% + ${dirX * visualDist}px), calc(-50% + ${dirY * visualDist}px))`;
+  mobileJoystickEl.classList.toggle('sprinting', mobileSprintHeld);
+}
+
+function resetMobileJoystick() {
+  mobileJoystickPointer = null;
+  mobileMoveX = 0;
+  mobileMoveY = 0;
+  mobileSprintHeld = false;
+  mobileJoystickKnobEl?.style.setProperty('transform', 'translate(-50%, -50%)');
+  mobileJoystickEl?.classList.remove('sprinting');
+}
+
+function beginMobileLook(pointerId, clientX, clientY) {
+  if (!mobileSessionActive || storyInputLocked || mobileLookPointer !== null) return false;
+  mobileLookPointer = pointerId;
+  document.body.classList.add('mobile-look-used');
+  mobileLookLastX = clientX;
+  mobileLookLastY = clientY;
+  return true;
+}
+
+function moveMobileLook(pointerId, clientX, clientY) {
+  if (pointerId !== mobileLookPointer || !mobileSessionActive || storyInputLocked) return;
+  const dx = clientX - mobileLookLastX;
+  const dy = clientY - mobileLookLastY;
+  mobileLookLastX = clientX;
+  mobileLookLastY = clientY;
+
+  // Queue deltas and consume them during the render loop. Pointer events can arrive
+  // in uneven bursts on phones; smoothing them over a couple frames removes jitter.
+  mobileLookAccumX = THREE.MathUtils.clamp(mobileLookAccumX + dx, -160, 160);
+  mobileLookAccumY = THREE.MathUtils.clamp(mobileLookAccumY + dy, -130, 130);
+}
+
+function endMobileLook(pointerId) {
+  if (pointerId === mobileLookPointer) mobileLookPointer = null;
+}
+
+function updateMobileLook(dt) {
+  if (!IS_TOUCH_DEVICE || !mobileSessionActive || storyInputLocked) {
+    mobileLookAccumX = 0;
+    mobileLookAccumY = 0;
+    return;
   }
-  mobileMoveX = THREE.MathUtils.clamp(dx / maxRadius, -1, 1);
-  mobileMoveY = THREE.MathUtils.clamp(-dy / maxRadius, -1, 1);
-  const analogMagnitude = Math.hypot(mobileMoveX, mobileMoveY);
-  if (analogMagnitude < .10) { mobileMoveX = 0; mobileMoveY = 0; }
-  mobileJoystickKnobEl.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+  if (Math.abs(mobileLookAccumX) < .01 && Math.abs(mobileLookAccumY) < .01) return;
+
+  const response = 1 - Math.exp(-34 * dt);
+  const dx = mobileLookAccumX * response;
+  const dy = mobileLookAccumY * response;
+  mobileLookAccumX -= dx;
+  mobileLookAccumY -= dy;
+
+  const sensitivity = Number(sensitivitySetting?.value || .78);
+  const scale = .00435 * (sensitivity / .78);
+  camera.rotation.y -= dx * scale;
+  camera.rotation.x -= dy * scale;
+  camera.rotation.x = THREE.MathUtils.clamp(camera.rotation.x, -Math.PI / 2 + .15, Math.PI / 2 - .15);
+  weaponSwayX = THREE.MathUtils.clamp(weaponSwayX + dx * .00020, -.022, .022);
+  weaponSwayY = THREE.MathUtils.clamp(weaponSwayY + dy * .00017, -.018, .018);
 }
 
 if (IS_TOUCH_DEVICE) {
   camera.rotation.order = 'YXZ';
+
   const menuFootnote = document.querySelector('#main-menu-panel .footnote');
   if (menuFootnote) menuFootnote.textContent = 'ARENA: LIVING PAGE · STORY: THE BORROWED LINE · MOBILE TOUCH BUILD';
   const sensitivityLabel = sensitivitySetting?.closest('.setting-row')?.querySelector('b');
   if (sensitivityLabel) sensitivityLabel.textContent = 'LOOK SENSITIVITY';
   const controlNote = document.querySelector('#controls-menu-panel .menu-note');
-  if (controlNote) controlNote.textContent = 'Mobile: left joystick moves, drag the right side to aim, hold FIRE to shoot, hold AIM to focus, tap AIM to reload, and use the action buttons for jump, slide, dash, interact and weapon swap.';
+  if (controlNote) controlNote.textContent = 'Mobile: left stick moves; push it fully forward to sprint. Drag the clear right side to look. FIRE holds continuously. AIM toggles ADS. RELOAD is separate. Jump, crouch/slide, dash, interact and weapon swap sit around the right thumb.';
   const controlCells = [...document.querySelectorAll('#controls-menu-panel .instruction-grid > div')];
   const touchHelp = [
-    ['LEFT STICK','move'], ['RIGHT SIDE','drag to look'], ['FIRE','hold to shoot'],
-    ['AIM','hold aim · tap reload'], ['SPRINT','hold while moving'], ['CROUCH','hold · sprint to slide'],
+    ['LEFT STICK','move · full up = sprint'], ['RIGHT SIDE','drag to look'], ['FIRE','hold to shoot'],
+    ['AIM','tap to toggle ADS'], ['RELOAD','separate reload'], ['CROUCH','tap crouch · at speed slide'],
     ['DASH','directional burst'], ['JUMP','jump · slide jump'], ['USE','notes · interact']
   ];
   controlCells.forEach((cell, i) => {
@@ -4703,121 +4805,237 @@ if (IS_TOUCH_DEVICE) {
   });
   const scopeNote = document.querySelector('.scope-note');
   const adsNote = document.querySelector('.ads-note');
-  if (scopeNote) scopeNote.textContent = 'RULER OPTIC // HOLD AIM';
-  if (adsNote) adsNote.textContent = 'FOCUS SIGHT // HOLD AIM';
+  if (scopeNote) scopeNote.textContent = 'RULER OPTIC // TAP AIM';
+  if (adsNote) adsNote.textContent = 'FOCUS SIGHT // TAP AIM';
 
-  mobileJoystickEl?.addEventListener('pointerdown', (event) => {
-    if (!mobileSessionActive || storyInputLocked) return;
-    event.preventDefault();
-    mobileJoystickPointer = event.pointerId;
-    mobileJoystickEl.setPointerCapture?.(event.pointerId);
-    updateJoystickFromPointer(event);
-  });
-  mobileJoystickEl?.addEventListener('pointermove', (event) => {
-    if (event.pointerId !== mobileJoystickPointer) return;
-    event.preventDefault();
-    updateJoystickFromPointer(event);
-  });
-  const releaseJoystick = (event) => {
-    if (event.pointerId !== mobileJoystickPointer) return;
-    mobileJoystickPointer = null;
-    mobileMoveX = 0;
-    mobileMoveY = 0;
-    mobileJoystickKnobEl.style.transform = 'translate(-50%, -50%)';
-  };
-  mobileJoystickEl?.addEventListener('pointerup', releaseJoystick);
-  mobileJoystickEl?.addEventListener('pointercancel', releaseJoystick);
+  // Stop Safari/Chrome gesture handling from stealing game touches while playing.
+  document.addEventListener('touchmove', (event) => {
+    if (mobileSessionActive && event.target.closest?.('#mobile-controls')) event.preventDefault();
+  }, { passive: false });
+  document.addEventListener('gesturestart', (event) => {
+    if (mobileSessionActive) event.preventDefault();
+  }, { passive: false });
 
-  mobileLookZoneEl?.addEventListener('pointerdown', (event) => {
-    if (!mobileSessionActive || storyInputLocked || event.target !== mobileLookZoneEl) return;
-    event.preventDefault();
-    mobileLookPointer = event.pointerId;
-    mobileLookLastX = event.clientX;
-    mobileLookLastY = event.clientY;
-    mobileLookZoneEl.setPointerCapture?.(event.pointerId);
-  });
-  mobileLookZoneEl?.addEventListener('pointermove', (event) => {
-    if (event.pointerId !== mobileLookPointer || !mobileSessionActive || storyInputLocked) return;
-    event.preventDefault();
-    const dx = event.clientX - mobileLookLastX;
-    const dy = event.clientY - mobileLookLastY;
-    mobileLookLastX = event.clientX;
-    mobileLookLastY = event.clientY;
-    const sensitivity = Number(sensitivitySetting?.value || .78);
-    const scale = .00315 * (sensitivity / .78);
-    camera.rotation.y -= dx * scale;
-    camera.rotation.x -= dy * scale;
-    camera.rotation.x = THREE.MathUtils.clamp(camera.rotation.x, -Math.PI / 2 + .15, Math.PI / 2 - .15);
-    weaponSwayX = THREE.MathUtils.clamp(weaponSwayX + dx * .00026, -.022, .022);
-    weaponSwayY = THREE.MathUtils.clamp(weaponSwayY + dy * .00022, -.018, .018);
-  });
-  const releaseLook = (event) => {
-    if (event.pointerId === mobileLookPointer) mobileLookPointer = null;
-  };
-  mobileLookZoneEl?.addEventListener('pointerup', releaseLook);
-  mobileLookZoneEl?.addEventListener('pointercancel', releaseLook);
+  if ('PointerEvent' in window) {
+    // Movement stick. Document-level move/up handlers are more reliable than pointer
+    // capture across iOS/Android browser chrome changes and accidental thumb drift.
+    mobileJoystickEl?.addEventListener('pointerdown', (event) => {
+      if (!mobileSessionActive || storyInputLocked || mobileJoystickPointer !== null) return;
+      event.preventDefault();
+      event.stopPropagation();
+      mobileJoystickPointer = event.pointerId;
+      updateJoystickFromPoint(event.clientX, event.clientY);
+      mobileHaptic(5);
+    });
+    document.addEventListener('pointermove', (event) => {
+      if (event.pointerId !== mobileJoystickPointer) return;
+      event.preventDefault();
+      updateJoystickFromPoint(event.clientX, event.clientY);
+    }, { passive: false });
+    const releaseJoystickPointer = (event) => {
+      if (event.pointerId !== mobileJoystickPointer) return;
+      resetMobileJoystick();
+    };
+    document.addEventListener('pointerup', releaseJoystickPointer, true);
+    document.addEventListener('pointercancel', releaseJoystickPointer, true);
 
-  const holdButton = (button, onDown, onUp) => {
+    // Camera look can begin on the dedicated surface or any blank part of the action
+    // cluster. Buttons stop propagation, so shooting never also yanks the camera.
+    const attachLookSurface = (surface) => {
+      if (!surface) return;
+      surface.addEventListener('pointerdown', (event) => {
+        if (event.target.closest?.('button')) return;
+        if (!beginMobileLook(event.pointerId, event.clientX, event.clientY)) return;
+        event.preventDefault();
+      });
+    };
+    attachLookSurface(mobileLookZoneEl);
+    attachLookSurface(mobileActionClusterEl);
+    document.addEventListener('pointermove', (event) => {
+      if (event.pointerId !== mobileLookPointer) return;
+      event.preventDefault();
+      moveMobileLook(event.pointerId, event.clientX, event.clientY);
+    }, { passive: false });
+    const releaseLookPointer = (event) => endMobileLook(event.pointerId);
+    document.addEventListener('pointerup', releaseLookPointer, true);
+    document.addEventListener('pointercancel', releaseLookPointer, true);
+  } else {
+    // Fallback for older iOS WebViews without Pointer Events.
+    mobileJoystickEl?.addEventListener('touchstart', (event) => {
+      if (!mobileSessionActive || storyInputLocked || mobileJoystickPointer !== null) return;
+      const touch = event.changedTouches[0];
+      mobileJoystickPointer = touch.identifier;
+      updateJoystickFromPoint(touch.clientX, touch.clientY);
+      event.preventDefault();
+    }, { passive: false });
+    document.addEventListener('touchmove', (event) => {
+      for (const touch of event.changedTouches) {
+        if (touch.identifier === mobileJoystickPointer) updateJoystickFromPoint(touch.clientX, touch.clientY);
+        if (touch.identifier === mobileLookPointer) moveMobileLook(touch.identifier, touch.clientX, touch.clientY);
+      }
+      if (mobileSessionActive) event.preventDefault();
+    }, { passive: false });
+    document.addEventListener('touchend', (event) => {
+      for (const touch of event.changedTouches) {
+        if (touch.identifier === mobileJoystickPointer) resetMobileJoystick();
+        endMobileLook(touch.identifier);
+      }
+    }, { passive: false });
+    const attachTouchLookSurface = (surface) => surface?.addEventListener('touchstart', (event) => {
+      if (event.target.closest?.('button')) return;
+      if (!mobileSessionActive || storyInputLocked || mobileLookPointer !== null) return;
+      const touch = event.changedTouches[0];
+      beginMobileLook(touch.identifier, touch.clientX, touch.clientY);
+      event.preventDefault();
+    }, { passive: false });
+    attachTouchLookSurface(mobileLookZoneEl);
+    attachTouchLookSurface(mobileActionClusterEl);
+  }
+
+  // Reliable button binding: release is listened for on document, not just the
+  // button, so sliding a thumb outside the visual circle cannot leave FIRE stuck.
+  function bindMobileHoldButton(button, onDown, onUp) {
     if (!button) return;
-    button.addEventListener('pointerdown', (event) => {
+    if ('PointerEvent' in window) {
+      let activePointer = null;
+      button.addEventListener('pointerdown', (event) => {
+        if (!mobileSessionActive || storyInputLocked || activePointer !== null) return;
+        event.preventDefault();
+        event.stopPropagation();
+        activePointer = event.pointerId;
+        button.classList.add('pressed');
+        mobileHaptic(6);
+        onDown?.(event);
+      });
+      const release = (event) => {
+        if (activePointer === null || event.pointerId !== activePointer) return;
+        activePointer = null;
+        button.classList.remove('pressed');
+        onUp?.(event);
+      };
+      document.addEventListener('pointerup', release, true);
+      document.addEventListener('pointercancel', release, true);
+      return;
+    }
+
+    let activeTouch = null;
+    button.addEventListener('touchstart', (event) => {
+      if (!mobileSessionActive || storyInputLocked || activeTouch !== null) return;
+      const touch = event.changedTouches[0];
+      activeTouch = touch.identifier;
+      button.classList.add('pressed');
+      mobileHaptic(6);
+      onDown?.(event);
+      event.preventDefault();
+      event.stopPropagation();
+    }, { passive: false });
+    const releaseTouch = (event) => {
+      for (const touch of event.changedTouches) {
+        if (touch.identifier !== activeTouch) continue;
+        activeTouch = null;
+        button.classList.remove('pressed');
+        onUp?.(event);
+        break;
+      }
+    };
+    document.addEventListener('touchend', releaseTouch, { passive: false, capture: true });
+    document.addEventListener('touchcancel', releaseTouch, { passive: false, capture: true });
+  }
+
+  function bindMobileTapButton(button, action) {
+    if (!button) return;
+    const press = (event) => {
       if (!mobileSessionActive || storyInputLocked) return;
       event.preventDefault();
       event.stopPropagation();
-      button.setPointerCapture?.(event.pointerId);
       button.classList.add('pressed');
-      onDown?.(event);
-    });
-    const release = (event) => {
-      button.classList.remove('pressed');
-      onUp?.(event);
+      mobileHaptic(7);
+      action?.(event);
+      clearTimeout(button.__inkbreakPressTimer);
+      button.__inkbreakPressTimer = setTimeout(() => button.classList.remove('pressed'), 95);
     };
-    button.addEventListener('pointerup', release);
-    button.addEventListener('pointercancel', release);
-  };
+    if ('PointerEvent' in window) {
+      button.addEventListener('pointerdown', press);
+      button.addEventListener('pointerup', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        button.classList.remove('pressed');
+      });
+    } else {
+      button.addEventListener('touchstart', press, { passive: false });
+      button.addEventListener('touchend', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        button.classList.remove('pressed');
+      }, { passive: false });
+    }
+  }
 
-  holdButton(mobileFireBtn, () => {
+  bindMobileHoldButton(mobileFireBtn, (event) => {
     if (!triggerHeld) triggerHoldStartedAt = performance.now();
     triggerHeld = true;
+    // FIRE also acts as a look surface while held, so the right thumb can track a
+    // target and shoot at the same time instead of requiring a third finger.
+    if ('pointerId' in event) beginMobileLook(event.pointerId, event.clientX, event.clientY);
     fireTestShot();
-  }, () => {
+  }, (event) => {
     triggerHeld = false;
     triggerHoldStartedAt = 0;
+    if ('pointerId' in event) endMobileLook(event.pointerId);
   });
 
-  holdButton(mobileSprintBtn, () => { mobileSprintHeld = true; }, () => { mobileSprintHeld = false; });
-  holdButton(mobileCrouchBtn, () => {
-    mobileCrouchHeld = true;
-    tryStartSlide();
-  }, () => { mobileCrouchHeld = false; });
+  bindMobileTapButton(mobileAimBtn, () => {
+    if (currentWeapon().melee || isReloading || sliding || dashTimer > 0) return;
+    mobileAimActive = !mobileAimActive;
+    isAiming = mobileAimActive;
+  });
 
-  holdButton(mobileAimBtn, () => {
-    rightMouseDown = true;
-    rightMouseDownAt = performance.now();
-    rightMouseBecameAim = false;
-  }, () => {
-    const heldFor = performance.now() - rightMouseDownAt;
-    rightMouseDown = false;
-    if (!rightMouseBecameAim && heldFor < AIM_HOLD_MS + 45) startReload();
+  bindMobileTapButton(mobileReloadBtn, () => {
+    mobileAimActive = false;
     isAiming = false;
+    startReload();
   });
 
-  mobileJumpBtn?.addEventListener('pointerdown', (event) => { event.preventDefault(); event.stopPropagation(); if (mobileSessionActive && !storyInputLocked) tryJump(); });
-  mobileDashBtn?.addEventListener('pointerdown', (event) => { event.preventDefault(); event.stopPropagation(); if (mobileSessionActive && !storyInputLocked) tryDash(); });
-  mobileUseBtn?.addEventListener('pointerdown', (event) => {
-    event.preventDefault(); event.stopPropagation();
-    if (mobileSessionActive && !storyInputLocked && typeof tryReadNearbyStoryNote === 'function') tryReadNearbyStoryNote();
+  bindMobileTapButton(mobileJumpBtn, () => tryJump());
+  bindMobileTapButton(mobileDashBtn, () => tryDash());
+
+  bindMobileTapButton(mobileCrouchBtn, () => {
+    const horizontalSpeed = Math.hypot(velocity.x, velocity.z);
+    const wantsSlide = mobileSprintHeld || horizontalSpeed > 5.8;
+    if (wantsSlide && grounded && !sliding) {
+      mobileCrouchLatched = false;
+      mobileCrouchHeld = true;
+      tryStartSlide();
+      setTimeout(() => {
+        if (!mobileCrouchLatched) mobileCrouchHeld = false;
+      }, 130);
+      return;
+    }
+    mobileCrouchLatched = !mobileCrouchLatched;
+    mobileCrouchHeld = mobileCrouchLatched;
+    mobileCrouchBtn.classList.toggle('latched', mobileCrouchLatched);
   });
-  mobileWeaponBtn?.addEventListener('pointerdown', (event) => {
-    event.preventDefault(); event.stopPropagation();
-    if (!mobileSessionActive || storyInputLocked) return;
+
+  bindMobileTapButton(mobileUseBtn, () => {
+    if (typeof tryReadNearbyStoryNote === 'function') tryReadNearbyStoryNote();
+  });
+
+  bindMobileTapButton(mobileWeaponBtn, () => {
     const available = Object.entries(WEAPON_PROFILES)
       .filter(([id]) => unlockedWeapons.has(id))
       .sort((a,b) => a[1].slot - b[1].slot);
+    if (!available.length) return;
     const currentIndex = available.findIndex(([id]) => id === currentWeaponId);
     const next = available[(currentIndex + 1 + available.length) % available.length];
     if (next) switchWeaponBySlot(next[1].slot);
   });
-  mobilePauseBtn?.addEventListener('pointerdown', (event) => { event.preventDefault(); event.stopPropagation(); pauseMobileGame(); });
+
+  mobilePauseBtn?.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    mobileHaptic(6);
+    pauseMobileGame();
+  });
 
   mobileLandscapeBtn?.addEventListener('pointerup', (event) => {
     event.preventDefault();
@@ -5077,6 +5295,7 @@ function animate(now) {
   const dt = Math.min((now - lastTime) / 1000, 0.04);
   lastTime = now;
   updateAimState(now);
+  updateMobileLook(dt);
   updateMovement(dt);
   updateRoundProgression(now);
   updateArenaObjective(now, dt);

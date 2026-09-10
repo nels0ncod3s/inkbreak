@@ -278,25 +278,30 @@
 
   <div id="mobile-controls" aria-label="mobile game controls">
     <button id="mobile-pause" class="mobile-utility" aria-label="Pause">II</button>
-    <div id="mobile-look-zone" aria-label="Drag to aim"></div>
+
+    <!-- The entire right half is a dedicated look surface. Action buttons sit
+         above it and stop their own touches from becoming camera gestures. -->
+    <div id="mobile-look-zone" aria-label="Drag anywhere on the right side to look">
+      <span class="look-hint">DRAG TO LOOK</span>
+    </div>
 
     <div id="mobile-left-controls">
-      <button id="mobile-sprint" class="touch-pill">SPRINT</button>
       <div id="mobile-joystick" aria-label="Movement joystick">
         <div class="joystick-ring"></div>
         <div id="mobile-joystick-knob"></div>
-        <span>MOVE</span>
+        <span>MOVE · PUSH UP TO SPRINT</span>
       </div>
     </div>
 
-    <div id="mobile-action-cluster">
-      <button id="mobile-weapon" class="touch-action touch-small"><b>↻</b><span>WEAPON</span></button>
-      <button id="mobile-use" class="touch-action touch-small"><b>E</b><span>USE</span></button>
-      <button id="mobile-dash" class="touch-action"><b>»</b><span>DASH</span></button>
-      <button id="mobile-jump" class="touch-action"><b>↑</b><span>JUMP</span></button>
-      <button id="mobile-crouch" class="touch-action"><b>⌄</b><span>CROUCH / SLIDE</span></button>
-      <button id="mobile-aim" class="touch-action aim-action"><b>◎</b><span>AIM / TAP RELOAD</span></button>
-      <button id="mobile-fire" class="touch-fire"><span>FIRE</span></button>
+    <div id="mobile-action-cluster" aria-label="action buttons">
+      <button id="mobile-reload" class="touch-action touch-small" aria-label="Reload"><b>↯</b><span>RELOAD</span></button>
+      <button id="mobile-weapon" class="touch-action touch-small" aria-label="Change weapon"><b>↻</b><span>WEAPON</span></button>
+      <button id="mobile-use" class="touch-action touch-small" aria-label="Interact"><b>E</b><span>USE</span></button>
+      <button id="mobile-dash" class="touch-action" aria-label="Dash"><b>»</b><span>DASH</span></button>
+      <button id="mobile-jump" class="touch-action" aria-label="Jump"><b>↑</b><span>JUMP</span></button>
+      <button id="mobile-crouch" class="touch-action" aria-label="Crouch or slide"><b>⌄</b><span>CROUCH</span></button>
+      <button id="mobile-aim" class="touch-action aim-action" aria-label="Aim down sights"><b>◎</b><span>AIM</span></button>
+      <button id="mobile-fire" class="touch-fire" aria-label="Fire"><span>FIRE</span></button>
     </div>
   </div>
 

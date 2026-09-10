@@ -1780,3 +1780,301 @@ body.touch-device.mobile-playing canvas { touch-action: none; }
 @media (orientation: landscape) {
   body.touch-device #orientation-gate { display: none !important; }
 }
+
+/* ========================================================================== */
+/* INKBREAK MOBILE CONTROL PASS V2                                            */
+/* Rebuilt around two-thumb play: move left, look/fire right.                 */
+/* ========================================================================== */
+
+body.touch-device {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+body.touch-device.mobile-playing {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+body.touch-device.mobile-playing #mobile-controls {
+  display: block;
+  pointer-events: none;
+  touch-action: none;
+}
+
+body.touch-device.mobile-playing #mobile-controls *,
+body.touch-device.mobile-playing #mobile-controls {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+}
+
+/* Right thumb gets a very large empty camera surface. It sits behind actions. */
+#mobile-look-zone {
+  left: 40%;
+  right: 0;
+  top: 0;
+  width: auto;
+  height: 100%;
+  z-index: 1;
+  pointer-events: auto;
+  touch-action: none;
+  background: transparent;
+}
+
+#mobile-look-zone .look-hint {
+  position: absolute;
+  right: 31%;
+  top: 49%;
+  transform: translate(50%, -50%) rotate(-2deg);
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: .16em;
+  color: rgba(23,77,154,.22);
+  pointer-events: none;
+  opacity: .75;
+  transition: opacity .3s ease;
+}
+body.mobile-playing.aiming #mobile-look-zone .look-hint { opacity: .18; }
+
+/* Left thumb: one large stick, no second sprint button to hunt for. */
+#mobile-left-controls {
+  position: absolute;
+  left: max(18px, env(safe-area-inset-left));
+  bottom: max(18px, env(safe-area-inset-bottom));
+  width: 180px;
+  height: 180px;
+  z-index: 6;
+  pointer-events: none;
+}
+
+#mobile-joystick {
+  left: 0;
+  bottom: 0;
+  width: 164px;
+  height: 164px;
+  pointer-events: auto;
+  touch-action: none;
+  border: 2px solid rgba(23,77,154,.52);
+  background:
+    radial-gradient(circle, rgba(255,253,245,.12) 0 48%, transparent 49%),
+    rgba(255,253,245,.025);
+  box-shadow: inset 0 0 0 7px rgba(23,77,154,.025);
+}
+
+#mobile-joystick .joystick-ring { inset: 23px; }
+
+#mobile-joystick-knob {
+  width: 64px;
+  height: 64px;
+  background:
+    repeating-linear-gradient(-9deg, rgba(23,77,154,.08) 0 1px, transparent 1px 6px),
+    rgba(255,253,245,.76);
+  box-shadow: 4px 4px 0 rgba(23,77,154,.10);
+}
+
+#mobile-joystick.sprinting {
+  border-style: dashed;
+  box-shadow: inset 0 0 0 8px rgba(23,77,154,.055);
+}
+#mobile-joystick.sprinting #mobile-joystick-knob {
+  background:
+    repeating-linear-gradient(-9deg, rgba(255,253,245,.18) 0 1px, transparent 1px 6px),
+    rgba(23,77,154,.74);
+  border-color: rgba(23,77,154,.95);
+}
+
+#mobile-joystick > span {
+  bottom: 4px;
+  transform: translate(-50%, 100%) rotate(-1deg);
+  white-space: nowrap;
+  font-size: 7px;
+  opacity: .58;
+}
+
+#mobile-sprint { display: none !important; }
+
+/* Right thumb cluster. Blank space remains a camera-look surface in JS. */
+#mobile-action-cluster {
+  position: absolute;
+  right: max(12px, env(safe-area-inset-right));
+  bottom: max(12px, env(safe-area-inset-bottom));
+  width: 300px;
+  height: 224px;
+  z-index: 8;
+  pointer-events: auto;
+  touch-action: none;
+  background: transparent;
+}
+
+.touch-action,
+.touch-fire,
+.mobile-utility {
+  pointer-events: auto;
+  touch-action: none;
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.touch-action {
+  width: 60px;
+  height: 60px;
+  border-width: 1.8px;
+  background:
+    repeating-linear-gradient(-9deg, rgba(23,77,154,.035) 0 1px, transparent 1px 7px),
+    rgba(255,253,245,.62);
+  backdrop-filter: blur(1px);
+}
+.touch-action b { font-size: 18px; }
+.touch-action span { font-size: 6.2px; line-height: 1.05; }
+.touch-small { width: 46px; height: 46px; }
+.touch-small b { font-size: 12px; }
+.touch-small span { font-size: 5.5px; }
+
+.touch-action.pressed,
+.touch-action.latched,
+.touch-fire.pressed {
+  background:
+    repeating-linear-gradient(-9deg, rgba(255,253,245,.14) 0 1px, transparent 1px 7px),
+    rgba(23,77,154,.86);
+  color: var(--paper-bright);
+  transform: rotate(var(--touch-rot, 0deg)) scale(.92);
+}
+
+/* Primary thumb arc: FIRE at rest, AIM just above, movement actions to the left. */
+#mobile-fire {
+  right: 0;
+  bottom: 0;
+  width: 100px;
+  height: 100px;
+  z-index: 5;
+  border-width: 2.4px;
+  background:
+    repeating-linear-gradient(12deg, rgba(23,77,154,.095) 0 2px, transparent 2px 8px),
+    rgba(255,253,245,.72);
+}
+#mobile-fire span { font-size: 13px; }
+
+#mobile-aim {
+  right: 16px;
+  bottom: 112px;
+  width: 62px;
+  height: 62px;
+  z-index: 6;
+  --touch-rot: -.7deg;
+}
+
+#mobile-reload {
+  right: 88px;
+  bottom: 157px;
+  z-index: 6;
+  --touch-rot: 1deg;
+}
+
+#mobile-jump {
+  right: 112px;
+  bottom: 86px;
+  z-index: 6;
+  --touch-rot: -1.2deg;
+}
+
+#mobile-crouch {
+  right: 114px;
+  bottom: 14px;
+  width: 58px;
+  height: 58px;
+  z-index: 6;
+  --touch-rot: 1.4deg;
+}
+
+#mobile-dash {
+  right: 184px;
+  bottom: 47px;
+  width: 56px;
+  height: 56px;
+  z-index: 6;
+  --touch-rot: .6deg;
+}
+
+#mobile-weapon {
+  right: 181px;
+  bottom: 119px;
+  z-index: 6;
+  --touch-rot: -1.5deg;
+}
+
+#mobile-use {
+  right: 235px;
+  bottom: 119px;
+  z-index: 6;
+  --touch-rot: 1.2deg;
+}
+body:not(.story-mode) #mobile-use { display: none; }
+
+#mobile-pause {
+  right: max(12px, env(safe-area-inset-right));
+  top: max(10px, env(safe-area-inset-top));
+  z-index: 11;
+  width: 42px;
+  height: 38px;
+}
+
+/* Keep the actual play area clean. Primary stats are compact and top-left. */
+@media (hover: none) and (pointer: coarse) and (orientation: landscape) {
+  #bottom-left {
+    width: 252px;
+    transform: scale(.78);
+    transform-origin: top left;
+  }
+  #bottom-left .meter-panel { width: 148px; }
+  #bottom-left .ammo-panel { min-width: 94px; }
+
+  #arena-objective {
+    width: min(300px, 39vw);
+    transform: translateX(-50%) rotate(-.4deg) scale(.76);
+  }
+  body.story-mode #story-objective {
+    width: min(350px, 44vw);
+    transform: translateX(-50%) rotate(-.3deg) scale(.76);
+  }
+
+  #movement-note {
+    bottom: 10px;
+    font-size: 7px;
+    opacity: .62;
+  }
+}
+
+/* Common 16:9 phones. Keep thumb targets large while moving them farther apart. */
+@media (hover: none) and (pointer: coarse) and (orientation: landscape) and (max-height: 440px) {
+  #mobile-left-controls {
+    left: max(12px, env(safe-area-inset-left));
+    bottom: max(12px, env(safe-area-inset-bottom));
+    transform: scale(.82);
+    transform-origin: bottom left;
+  }
+  #mobile-action-cluster {
+    right: max(8px, env(safe-area-inset-right));
+    bottom: max(8px, env(safe-area-inset-bottom));
+    transform: scale(.84);
+    transform-origin: bottom right;
+  }
+  #mobile-pause { transform: scale(.86) rotate(.8deg); }
+  #bottom-left { transform: scale(.68); }
+  #mobile-look-zone .look-hint { display: none; }
+}
+
+/* Extra-wide, very short devices need the actions compressed horizontally only. */
+@media (hover: none) and (pointer: coarse) and (orientation: landscape) and (max-height: 370px) {
+  #mobile-left-controls { transform: scale(.72); }
+  #mobile-action-cluster { transform: scale(.73); }
+  #bottom-left { transform: scale(.60); }
+  #arena-objective,
+  body.story-mode #story-objective { transform: translateX(-50%) scale(.65); }
+}
+body.mobile-look-used #mobile-look-zone .look-hint { opacity: 0; }

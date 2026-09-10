@@ -31,13 +31,14 @@ Then open `http://localhost:8000`. The project can also be deployed as a static 
 
 The mobile build is designed for landscape orientation and uses a reduced, touch-first HUD.
 
-- Left virtual joystick — analogue movement
-- Drag anywhere on the open right side — camera / aim
-- FIRE — hold to fire or repeatedly use the knife
-- AIM — hold for ADS / Ruler scope; quick tap reloads
-- SPRINT — hold while moving
-- CROUCH / SLIDE — hold to crouch; use while sprinting to slide
-- DASH — directional dash based on current joystick direction
+- Left virtual joystick — analogue movement with a radial deadzone
+- Push the joystick fully forward — automatic sprint
+- Drag anywhere across the clear right half — smooth camera look
+- FIRE — hold to continuously fire / repeatedly use the knife
+- AIM — tap to toggle ADS; the Ruler Rifle switches into its scope
+- RELOAD — dedicated reload button
+- CROUCH — tap to toggle crouch; tap while sprinting to slide
+- DASH — directional dash based on the current joystick direction
 - JUMP — jump / slide-jump
 - WEAPON — cycles through currently unlocked weapons
 - USE — Story notes and interactions
@@ -47,7 +48,7 @@ On supported mobile browsers, entering a match requests fullscreen and attempts 
 
 ## Mobile HUD
 
-The landscape HUD intentionally removes desktop-only clutter. Health, stamina and ammunition stay compact in the upper-left, the active objective remains near the top center, and the middle of the screen stays open for aiming. The full desktop weapon rack, coordinates and keyboard hint strip are hidden on touch devices.
+The landscape HUD intentionally removes desktop-only clutter. The touch layout was rebuilt around independent multi-touch pointers so movement, camera look, FIRE and action buttons can be used simultaneously without stealing one another's gestures. Health, stamina and ammunition stay compact in the upper-left, the active objective remains near the top center, and the middle of the screen stays open for aiming. The full desktop weapon rack, coordinates and keyboard hint strip are hidden on touch devices.
 
 ## Directional awareness
 
