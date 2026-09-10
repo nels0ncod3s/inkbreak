@@ -111,3 +111,11 @@ Every firearm has its own silhouette, ammo pool, recoil profile, fire cadence, A
 - Desktop and landscape mobile play are supported by the same static build.
 - Three.js is loaded from jsDelivr in the current static build.
 - Audio is generated procedurally through Web Audio, so no external sound files are required.
+
+
+## iOS / mobile install notes
+
+- Includes PNG manifest icons at 192px and 512px plus Apple touch icons at 152px, 167px and 180px.
+- Includes Apple standalone/status-bar metadata for Add to Home Screen on iPhone/iPad.
+- The manifest requests landscape orientation; iOS Safari may still require the user to rotate manually, so the in-game rotate gate remains the fallback.
+- Mobile joystick input is bound directly to the joystick and becomes active synchronously when gameplay starts; it does not wait for fullscreen/orientation APIs.

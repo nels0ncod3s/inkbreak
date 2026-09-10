@@ -74,6 +74,7 @@ const chapterCards = [...document.querySelectorAll('.chapter-card')];
 
 // ---------- Mobile touch shell ----------
 const IS_TOUCH_DEVICE = window.matchMedia('(pointer: coarse)').matches || navigator.userAgentData?.mobile === true || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const mobileControlsEl = document.querySelector('#mobile-controls');
 const mobileJoystickEl = document.querySelector('#mobile-joystick');
 const mobileJoystickKnobEl = document.querySelector('#mobile-joystick-knob');
@@ -91,14 +92,9 @@ const mobileLandscapeBtn = document.querySelector('#mobile-landscape-btn');
 const mobileActionClusterEl = document.querySelector('#mobile-action-cluster');
 
 document.body.classList.toggle('touch-device', IS_TOUCH_DEVICE);
-if (IS_TOUCH_DEVICE) {
-  // Best-effort orientation request on load. Most browsers intentionally require
-  // a user gesture/fullscreen first, so the rotate sheet remains the reliable fallback.
-  try {
-    const lockAttempt = screen.orientation?.lock?.('landscape');
-    lockAttempt?.catch?.(() => {});
-  } catch {}
-}
+// Do not request fullscreen/orientation during page boot. On real phones that can
+// steal or cancel the first gameplay touch stream. The manifest advertises
+// landscape for installed PWAs and the portrait rotate gate handles browser play.
 let mobileSessionActive = false;
 let mobileMoveX = 0;
 let mobileMoveY = 0;
@@ -141,6 +137,11 @@ function clearMobileInputs() {
 
 async function requestMobileLandscape() {
   if (!IS_TOUCH_DEVICE) return;
+  // iOS Safari/PWA does not reliably support the standard fullscreen +
+  // orientation-lock path. More importantly, attempting it while gameplay is
+  // starting can interrupt the first touch stream. On iOS we rely on the
+  // portrait rotate gate and the manifest's landscape preference instead.
+  if (IS_IOS) return;
   try {
     const root = document.documentElement;
     if (!document.fullscreenElement) {
@@ -160,11 +161,17 @@ function activateControlSession() {
   }
   // Input must become live immediately. Fullscreen/orientation APIs can take time,
   // reject, or settle after a browser UI transition. Gameplay must never wait on them.
+  // Make touch controls live synchronously. No fullscreen/orientation call is
+  // allowed in this critical path because those browser UI transitions can
+  // cancel the first joystick touch on iOS/Android.
+  clearMobileInputs();
   mobileSessionActive = true;
   document.body.classList.add('mobile-playing');
-  requestMobileLandscape();
   document.body.classList.remove('front-menu');
   menu.classList.remove('visible');
+  // Force layout now so the joystick has a real hit box before the player's
+  // first post-Play touch instead of waiting for a later paint/frame.
+  if (mobileJoystickEl) void mobileJoystickEl.offsetWidth;
   if (gameMode === 'arena' && typeof roundState !== 'undefined' && roundState === 'boot') startRound(1);
   if (gameMode === 'story' && typeof storyState !== 'undefined' && storyState === 'boot') startStoryMode();
 }
@@ -4846,126 +4853,155 @@ if (IS_TOUCH_DEVICE) {
     if (mobileSessionActive) event.preventDefault();
   }, { passive: false });
 
-  // Native Touch Events are the primary path on phones. They are stable across
-  // iOS/Android fullscreen and orientation changes and allow independent fingers.
+  // Native Touch Events: direct element ownership. The joystick is bound to
+  // itself rather than a document-level dispatcher, so the very first gameplay
+  // touch is usable immediately on iOS/Android.
   if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
     const fireTouchIds = new Set();
 
-    const isActionTarget = (target) => !!target?.closest?.('.touch-action, .touch-fire, .mobile-utility, #mobile-joystick');
+    const firstChangedTouch = (event) => event.changedTouches?.[0] || null;
+    const gameplayTouchReady = () => mobileGameplayInputAllowed();
 
-    document.addEventListener('touchstart', (event) => {
-      if (!mobileSessionActive) return;
-
-      for (const touch of event.changedTouches) {
-        const target = touch.target instanceof Element ? touch.target : document.elementFromPoint(touch.clientX, touch.clientY);
-        const button = target?.closest?.('button');
-
-        // Pause is intentionally available even when Story temporarily locks gameplay input.
-        if (button === mobilePauseBtn) {
-          event.preventDefault();
-          mobileHaptic(6);
-          pauseMobileGame();
-          continue;
-        }
-        if (!mobileGameplayInputAllowed()) continue;
-
-        if (target?.closest?.('#mobile-joystick')) {
-          if (mobileJoystickPointer === null) {
-            mobileJoystickPointer = touch.identifier;
-            updateJoystickFromPoint(touch.clientX, touch.clientY);
-            mobileJoystickEl?.classList.add('active');
-            mobileHaptic(4);
-          }
-          event.preventDefault();
-          continue;
-        }
-
-        if (button === mobileFireBtn) {
-          fireTouchIds.add(touch.identifier);
-          triggerHeld = true;
-          if (!triggerHoldStartedAt) triggerHoldStartedAt = performance.now();
-          mobileFireBtn.classList.add('pressed');
-          fireTestShot();
-          mobileHaptic(5);
-          event.preventDefault();
-          continue;
-        }
-        if (button === mobileAimBtn) {
-          if (!currentWeapon().melee && !isReloading && !sliding && dashTimer <= 0) {
-            mobileAimActive = !mobileAimActive;
-            isAiming = mobileAimActive;
-            mobileAimBtn.classList.toggle('latched', mobileAimActive);
-            flashMobileButton(mobileAimBtn, mobileAimActive);
-          }
-          mobileHaptic(5); event.preventDefault(); continue;
-        }
-        if (button === mobileReloadBtn) {
-          mobileAimActive = false; isAiming = false; mobileAimBtn?.classList.remove('latched');
-          startReload(); flashMobileButton(mobileReloadBtn); mobileHaptic(5); event.preventDefault(); continue;
-        }
-        if (button === mobileJumpBtn) {
-          tryJump(); flashMobileButton(mobileJumpBtn); mobileHaptic(5); event.preventDefault(); continue;
-        }
-        if (button === mobileDashBtn) {
-          tryDash(); flashMobileButton(mobileDashBtn); mobileHaptic(5); event.preventDefault(); continue;
-        }
-        if (button === mobileCrouchBtn) {
-          handleMobileCrouchAction(); flashMobileButton(mobileCrouchBtn, mobileCrouchLatched); mobileHaptic(5); event.preventDefault(); continue;
-        }
-        if (button === mobileWeaponBtn) {
-          cycleMobileWeapon(); flashMobileButton(mobileWeaponBtn); mobileHaptic(5); event.preventDefault(); continue;
-        }
-        if (button === mobileUseBtn) {
-          if (typeof tryReadNearbyStoryNote === 'function') tryReadNearbyStoryNote();
-          flashMobileButton(mobileUseBtn); mobileHaptic(5); event.preventDefault(); continue;
-        }
-
-        // Any empty part of the gameplay screen is a camera surface. Buttons and
-        // joystick never double as look controls.
-        if (!isActionTarget(target) && mobileLookPointer === null) {
-          beginMobileLook(touch.identifier, touch.clientX, touch.clientY);
-          event.preventDefault();
-        }
-      }
-    }, { passive: false, capture: true });
-
-    document.addEventListener('touchmove', (event) => {
-      if (!mobileSessionActive) return;
-      for (const touch of event.changedTouches) {
-        if (touch.identifier === mobileJoystickPointer) {
-          updateJoystickFromPoint(touch.clientX, touch.clientY);
-          continue;
-        }
-        if (touch.identifier === mobileLookPointer) {
-          moveMobileLook(touch.identifier, touch.clientX, touch.clientY);
-        }
-      }
+    mobileJoystickEl?.addEventListener('touchstart', (event) => {
+      if (!mobileSessionActive || mobileJoystickPointer !== null) return;
+      const touch = firstChangedTouch(event);
+      if (!touch) return;
       event.preventDefault();
-    }, { passive: false, capture: true });
+      event.stopPropagation();
+      mobileJoystickPointer = touch.identifier;
+      updateJoystickFromPoint(touch.clientX, touch.clientY);
+      mobileJoystickEl.classList.add('active');
+      mobileHaptic(4);
+    }, { passive:false });
 
-    const finishTouches = (event) => {
+    mobileJoystickEl?.addEventListener('touchmove', (event) => {
+      if (mobileJoystickPointer === null) return;
       for (const touch of event.changedTouches) {
-        if (touch.identifier === mobileJoystickPointer) resetMobileJoystick();
-        if (touch.identifier === mobileLookPointer) endMobileLook(touch.identifier);
-        if (fireTouchIds.has(touch.identifier)) {
-          fireTouchIds.delete(touch.identifier);
-          if (!fireTouchIds.size) {
-            triggerHeld = false;
-            triggerHoldStartedAt = 0;
-            mobileFireBtn?.classList.remove('pressed');
-          }
+        if (touch.identifier !== mobileJoystickPointer) continue;
+        event.preventDefault();
+        event.stopPropagation();
+        updateJoystickFromPoint(touch.clientX, touch.clientY);
+        break;
+      }
+    }, { passive:false });
+
+    const endJoystickTouch = (event) => {
+      if (mobileJoystickPointer === null) return;
+      for (const touch of event.changedTouches) {
+        if (touch.identifier !== mobileJoystickPointer) continue;
+        event.preventDefault();
+        resetMobileJoystick();
+        break;
+      }
+    };
+    mobileJoystickEl?.addEventListener('touchend', endJoystickTouch, { passive:false });
+    mobileJoystickEl?.addEventListener('touchcancel', endJoystickTouch, { passive:false });
+
+    mobileLookZoneEl?.addEventListener('touchstart', (event) => {
+      if (!gameplayTouchReady() || mobileLookPointer !== null) return;
+      const touch = firstChangedTouch(event);
+      if (!touch) return;
+      event.preventDefault();
+      beginMobileLook(touch.identifier, touch.clientX, touch.clientY);
+    }, { passive:false });
+
+    mobileLookZoneEl?.addEventListener('touchmove', (event) => {
+      if (mobileLookPointer === null) return;
+      for (const touch of event.changedTouches) {
+        if (touch.identifier !== mobileLookPointer) continue;
+        event.preventDefault();
+        moveMobileLook(touch.identifier, touch.clientX, touch.clientY);
+        break;
+      }
+    }, { passive:false });
+
+    const endLookTouch = (event) => {
+      if (mobileLookPointer === null) return;
+      for (const touch of event.changedTouches) {
+        if (touch.identifier === mobileLookPointer) {
+          endMobileLook(touch.identifier);
+          break;
         }
       }
     };
-    document.addEventListener('touchend', finishTouches, { passive: false, capture: true });
-    document.addEventListener('touchcancel', finishTouches, { passive: false, capture: true });
+    mobileLookZoneEl?.addEventListener('touchend', endLookTouch, { passive:false });
+    mobileLookZoneEl?.addEventListener('touchcancel', endLookTouch, { passive:false });
+
+    mobileFireBtn?.addEventListener('touchstart', (event) => {
+      if (!gameplayTouchReady()) return;
+      const touch = firstChangedTouch(event);
+      if (!touch) return;
+      event.preventDefault(); event.stopPropagation();
+      fireTouchIds.add(touch.identifier);
+      triggerHeld = true;
+      if (!triggerHoldStartedAt) triggerHoldStartedAt = performance.now();
+      mobileFireBtn.classList.add('pressed');
+      fireTestShot();
+      mobileHaptic(5);
+    }, { passive:false });
+
+    const releaseFire = (event) => {
+      for (const touch of event.changedTouches) fireTouchIds.delete(touch.identifier);
+      if (!fireTouchIds.size) {
+        triggerHeld = false;
+        triggerHoldStartedAt = 0;
+        mobileFireBtn?.classList.remove('pressed');
+      }
+    };
+    mobileFireBtn?.addEventListener('touchend', releaseFire, { passive:false });
+    mobileFireBtn?.addEventListener('touchcancel', releaseFire, { passive:false });
+
+    const bindTouchTap = (button, fn, {allowWhenLocked=false}={}) => {
+      button?.addEventListener('touchstart', (event) => {
+        if (!mobileSessionActive) return;
+        if (!allowWhenLocked && !gameplayTouchReady()) return;
+        event.preventDefault(); event.stopPropagation();
+        fn();
+        mobileHaptic(5);
+      }, { passive:false });
+    };
+
+    bindTouchTap(mobilePauseBtn, pauseMobileGame, {allowWhenLocked:true});
+    bindTouchTap(mobileAimBtn, () => {
+      if (currentWeapon().melee || isReloading || sliding || dashTimer > 0) return;
+      mobileAimActive = !mobileAimActive;
+      isAiming = mobileAimActive;
+      mobileAimBtn.classList.toggle('latched', mobileAimActive);
+      flashMobileButton(mobileAimBtn, mobileAimActive);
+    });
+    bindTouchTap(mobileReloadBtn, () => {
+      mobileAimActive = false; isAiming = false; mobileAimBtn?.classList.remove('latched');
+      startReload(); flashMobileButton(mobileReloadBtn);
+    });
+    bindTouchTap(mobileJumpBtn, () => { tryJump(); flashMobileButton(mobileJumpBtn); });
+    bindTouchTap(mobileDashBtn, () => { tryDash(); flashMobileButton(mobileDashBtn); });
+    bindTouchTap(mobileCrouchBtn, () => { handleMobileCrouchAction(); flashMobileButton(mobileCrouchBtn, mobileCrouchLatched); });
+    bindTouchTap(mobileWeaponBtn, () => { cycleMobileWeapon(); flashMobileButton(mobileWeaponBtn); });
+    bindTouchTap(mobileUseBtn, () => { tryReadNearbyStoryNote?.(); flashMobileButton(mobileUseBtn); });
+
+    // Global safety net: if Safari terminates a touch outside its original
+    // element, release state immediately rather than leaving movement/fire stuck.
+    const globalTouchRelease = (event) => {
+      for (const touch of event.changedTouches) {
+        if (touch.identifier === mobileJoystickPointer) resetMobileJoystick();
+        if (touch.identifier === mobileLookPointer) endMobileLook(touch.identifier);
+        if (fireTouchIds.has(touch.identifier)) fireTouchIds.delete(touch.identifier);
+      }
+      if (!fireTouchIds.size) {
+        triggerHeld = false;
+        triggerHoldStartedAt = 0;
+        mobileFireBtn?.classList.remove('pressed');
+      }
+    };
+    window.addEventListener('touchend', globalTouchRelease, { passive:true });
+    window.addEventListener('touchcancel', globalTouchRelease, { passive:true });
   } else if ('PointerEvent' in window) {
     // Pointer-only fallback for unusual touch-capable desktop/WebView environments.
     const actionPointerIds = new Map();
     let firePointer = null;
 
     mobileJoystickEl?.addEventListener('pointerdown', (event) => {
-      if (!mobileGameplayInputAllowed() || mobileJoystickPointer !== null) return;
+      if (!mobileSessionActive || mobileJoystickPointer !== null) return;
       event.preventDefault(); event.stopPropagation();
       mobileJoystickPointer = event.pointerId;
       updateJoystickFromPoint(event.clientX,event.clientY);
