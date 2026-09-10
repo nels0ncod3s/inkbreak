@@ -73,7 +73,7 @@ const chapterCards = [...document.querySelectorAll('.chapter-card')];
 
 
 // ---------- Mobile touch shell ----------
-const IS_TOUCH_DEVICE = window.matchMedia('(pointer: coarse)').matches || navigator.userAgentData?.mobile === true || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+const IS_TOUCH_DEVICE = navigator.maxTouchPoints > 0 || window.matchMedia('(pointer: coarse)').matches || navigator.userAgentData?.mobile === true || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 const IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const mobileControlsEl = document.querySelector('#mobile-controls');
 const mobileJoystickEl = document.querySelector('#mobile-joystick');
@@ -90,6 +90,7 @@ const mobileUseBtn = document.querySelector('#mobile-use');
 const mobilePauseBtn = document.querySelector('#mobile-pause');
 const mobileLandscapeBtn = document.querySelector('#mobile-landscape-btn');
 const mobileActionClusterEl = document.querySelector('#mobile-action-cluster');
+const orientationGateEl = document.querySelector('#orientation-gate');
 
 document.body.classList.toggle('touch-device', IS_TOUCH_DEVICE);
 // Do not request fullscreen/orientation during page boot. On real phones that can
@@ -4836,10 +4837,10 @@ if (IS_TOUCH_DEVICE) {
   const sensitivityLabel = sensitivitySetting?.closest('.setting-row')?.querySelector('b');
   if (sensitivityLabel) sensitivityLabel.textContent = 'LOOK SENSITIVITY';
   const controlNote = document.querySelector('#controls-menu-panel .menu-note');
-  if (controlNote) controlNote.textContent = 'Mobile: left stick moves. Drag the 3D game view to look. FIRE only shoots. AIM toggles ADS. RELOAD, JUMP, CROUCH/SLIDE, DASH and WEAPON are separate buttons.';
+  if (controlNote) controlNote.textContent = 'Mobile: left stick moves. Drag anywhere on the unobstructed game screen to look. FIRE shoots. AIM toggles ADS. RELOAD, JUMP, CROUCH/SLIDE, DASH and WEAPON are separate buttons.';
   const controlCells = [...document.querySelectorAll('#controls-menu-panel .instruction-grid > div')];
   const touchHelp = [
-    ['LEFT STICK','move · full up = sprint'], ['GAME VIEW','drag to look'], ['FIRE','hold to shoot'],
+    ['LEFT STICK','move · full up = sprint'], ['GAME SCREEN','drag to look'], ['FIRE','hold to shoot'],
     ['AIM','toggle ADS'], ['RELOAD','reload weapon'], ['CROUCH','tap crouch · at speed slide'],
     ['DASH','directional burst'], ['JUMP','jump · slide jump'], ['WEAPON','cycle unlocked guns']
   ];
@@ -4851,161 +4852,281 @@ if (IS_TOUCH_DEVICE) {
   if (scopeNote) scopeNote.textContent = 'RULER OPTIC // TAP AIM';
   if (adsNote) adsNote.textContent = 'FOCUS SIGHT // TAP AIM';
 
-  // One input model only: Pointer Events. Modern iOS Safari, Chrome Android and
-  // installed PWAs all support them. Mixing Touch Events and Pointer Events was
-  // the source of several stale / competing touch owners in previous builds.
-  const pointerState = {
-    joystick: null,
-    look: null,
-    fire: null
-  };
+  /*
+   * MOBILE INPUT V5
+   * ----------------
+   * One central touch router owns the entire mobile game. We deliberately use
+   * native Touch Events here because they are stable across iOS Safari, Android
+   * Chrome and installed PWAs and, unlike the previous Pointer Capture setup,
+   * cannot strand ownership on a hidden element after an orientation/UI change.
+   *
+   * Every active finger is assigned ONE role on touchstart and keeps that role
+   * until touchend/touchcancel: joystick, look, fire, or action.
+   */
+  const mobileTouches = new Map();
+  let joystickTouchId = null;
+  let lookTouchId = null;
+  let fireTouchId = null;
 
   renderer.domElement.style.touchAction = 'none';
   renderer.domElement.style.webkitUserSelect = 'none';
 
-  function validMobilePointer(event) {
-    return event.pointerType === 'touch' || event.pointerType === 'pen' || IS_TOUCH_DEVICE;
+  function pointInsideElement(x, y, el, pad = 0) {
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    if (!r.width || !r.height) return false;
+    return x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad;
   }
 
-  function capturePointer(el, id) {
-    try { el?.setPointerCapture?.(id); } catch {}
+  const mobileActionButtons = [
+    mobileFireBtn, mobileAimBtn, mobileReloadBtn, mobileJumpBtn,
+    mobileCrouchBtn, mobileDashBtn, mobileWeaponBtn, mobileUseBtn
+  ].filter(Boolean);
+
+  function actionButtonAt(x, y) {
+    // Primary combat buttons get priority where transformed visual circles overlap.
+    const priority = [mobileFireBtn, mobileAimBtn, mobileJumpBtn, mobileCrouchBtn, mobileDashBtn, mobileReloadBtn, mobileWeaponBtn, mobileUseBtn];
+    return priority.find(btn => btn && getComputedStyle(btn).display !== 'none' && pointInsideElement(x, y, btn, 2)) || null;
   }
 
-  function releasePointer(el, id) {
-    try {
-      if (el?.hasPointerCapture?.(id)) el.releasePointerCapture(id);
-    } catch {}
+  function isBlockingOverlayAt(x, y) {
+    const overlays = [menu, orientationGateEl, storyDialogueScreenEl, upgradeScreenEl];
+    return overlays.some(el => {
+      if (!el) return false;
+      const style = getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0 || !el.classList.contains('visible') && el !== orientationGateEl) return false;
+      return pointInsideElement(x, y, el);
+    });
   }
 
-  // ----- JOYSTICK -----
-  mobileJoystickEl?.addEventListener('pointerdown', (event) => {
-    if (!validMobilePointer(event) || !mobileGameplayInputAllowed() || pointerState.joystick !== null) return;
-    event.preventDefault();
-    event.stopPropagation();
-    pointerState.joystick = event.pointerId;
-    mobileJoystickPointer = event.pointerId;
-    capturePointer(mobileJoystickEl, event.pointerId);
-    mobileJoystickEl.classList.add('active');
-    updateJoystickFromPoint(event.clientX, event.clientY);
+  function setJoystickTouch(touch) {
+    if (joystickTouchId !== null) return false;
+    joystickTouchId = touch.identifier;
+    mobileJoystickPointer = touch.identifier;
+    mobileTouches.set(touch.identifier, { role: 'joystick' });
+    mobileJoystickEl?.classList.add('active');
+    updateJoystickFromPoint(touch.clientX, touch.clientY);
     mobileHaptic(4);
-  }, { passive: false });
+    return true;
+  }
 
-  // ----- LOOK: THE ACTUAL WEBGL CANVAS -----
-  // Empty HUD space passes through to the canvas. There is no invisible look
-  // overlay anymore, so the player is dragging the actual game surface.
-  renderer.domElement.addEventListener('pointerdown', (event) => {
-    if (!validMobilePointer(event) || !mobileGameplayInputAllowed() || pointerState.look !== null) return;
-    event.preventDefault();
-    pointerState.look = event.pointerId;
-    capturePointer(renderer.domElement, event.pointerId);
-    beginMobileLook(event.pointerId, event.clientX, event.clientY);
-  }, { passive: false });
+  function setLookTouch(touch) {
+    if (lookTouchId !== null || !mobileGameplayInputAllowed()) return false;
+    lookTouchId = touch.identifier;
+    mobileTouches.set(touch.identifier, {
+      role: 'look',
+      x: touch.clientX,
+      y: touch.clientY
+    });
+    beginMobileLook(touch.identifier, touch.clientX, touch.clientY);
+    return true;
+  }
 
-  // ----- FIRE -----
-  mobileFireBtn?.addEventListener('pointerdown', (event) => {
-    if (!validMobilePointer(event) || !mobileGameplayInputAllowed() || pointerState.fire !== null) return;
-    event.preventDefault();
-    event.stopPropagation();
-    pointerState.fire = event.pointerId;
-    capturePointer(mobileFireBtn, event.pointerId);
+  function setFireTouch(touch) {
+    if (fireTouchId !== null || !mobileGameplayInputAllowed()) return false;
+    fireTouchId = touch.identifier;
+    mobileTouches.set(touch.identifier, { role: 'fire' });
     triggerHeld = true;
     triggerHoldStartedAt = performance.now();
-    mobileFireBtn.classList.add('pressed');
+    mobileFireBtn?.classList.add('pressed');
     fireTestShot();
     mobileHaptic(5);
-  }, { passive: false });
+    return true;
+  }
 
-  // Move events live at window level so capture-loss or a finger leaving the
-  // element cannot freeze the stick / camera.
-  window.addEventListener('pointermove', (event) => {
-    if (!validMobilePointer(event) || !mobileSessionActive) return;
-    if (event.pointerId === pointerState.joystick) {
-      event.preventDefault();
-      updateJoystickFromPoint(event.clientX, event.clientY);
-      return;
-    }
-    if (event.pointerId === pointerState.look) {
-      event.preventDefault();
-      moveMobileLook(event.pointerId, event.clientX, event.clientY);
-    }
-  }, { passive: false });
+  function runActionButton(button) {
+    if (!button || !mobileSessionActive) return false;
 
-  function releaseGameplayPointer(event) {
-    const id = event.pointerId;
-    if (id === pointerState.joystick) {
-      releasePointer(mobileJoystickEl, id);
-      pointerState.joystick = null;
+    if (button === mobilePauseBtn) {
+      pauseMobileGame();
+      return true;
+    }
+
+    if (!mobileGameplayInputAllowed()) return false;
+
+    if (button === mobileAimBtn) {
+      if (currentWeapon().melee || isReloading || sliding || dashTimer > 0) return true;
+      mobileAimActive = !mobileAimActive;
+      isAiming = mobileAimActive;
+      mobileAimBtn.classList.toggle('latched', mobileAimActive);
+    } else if (button === mobileReloadBtn) {
+      mobileAimActive = false;
+      isAiming = false;
+      mobileAimBtn?.classList.remove('latched');
+      startReload();
+    } else if (button === mobileJumpBtn) {
+      tryJump();
+    } else if (button === mobileCrouchBtn) {
+      handleMobileCrouchAction();
+    } else if (button === mobileDashBtn) {
+      tryDash();
+    } else if (button === mobileWeaponBtn) {
+      cycleMobileWeapon();
+    } else if (button === mobileUseBtn) {
+      tryReadNearbyStoryNote?.();
+    } else {
+      return false;
+    }
+
+    if (button !== mobileCrouchBtn && button !== mobileAimBtn) flashMobileButton(button);
+    mobileHaptic(5);
+    return true;
+  }
+
+
+  function startTouch(touch) {
+    if (!mobileSessionActive) return false;
+    const x = touch.clientX;
+    const y = touch.clientY;
+
+    // Coordinate-based hit testing deliberately ignores DOM stacking. A HUD
+    // element can sit visually above the canvas without ever stealing gameplay
+    // input again.
+    if (pointInsideElement(x, y, mobilePauseBtn, 4)) {
+      mobileTouches.set(touch.identifier, { role: 'action' });
+      return runActionButton(mobilePauseBtn);
+    }
+
+    if (!mobileGameplayInputAllowed()) return false;
+
+    // Give the stick a small forgiving halo so the first thumb press works even
+    // when it lands just outside the drawn circle.
+    if (pointInsideElement(x, y, mobileJoystickEl, 14)) return setJoystickTouch(touch);
+
+    const action = actionButtonAt(x, y);
+    if (action === mobileFireBtn) return setFireTouch(touch);
+    if (action) {
+      mobileTouches.set(touch.identifier, { role: 'action' });
+      return runActionButton(action);
+    }
+
+    // Everything else on the live game viewport is camera look. No canvas hit
+    // test and no invisible look layer are involved.
+    if (!isBlockingOverlayAt(x, y)) return setLookTouch(touch);
+    return false;
+  }
+
+  function moveTouch(touch) {
+    const state = mobileTouches.get(touch.identifier);
+    if (!state || !mobileSessionActive) return false;
+
+    if (state.role === 'joystick') {
+      updateJoystickFromPoint(touch.clientX, touch.clientY);
+      return true;
+    }
+
+    if (state.role === 'look') {
+      const dx = touch.clientX - state.x;
+      const dy = touch.clientY - state.y;
+      state.x = touch.clientX;
+      state.y = touch.clientY;
+      mobileLookLastX = touch.clientX;
+      mobileLookLastY = touch.clientY;
+      if (Math.abs(dx) <= innerWidth * .45 && Math.abs(dy) <= innerHeight * .45) {
+        applyMobileLookDelta(dx, dy);
+      }
+      return true;
+    }
+
+    return state.role === 'fire' || state.role === 'action';
+  }
+
+  function endTouch(touch) {
+    const state = mobileTouches.get(touch.identifier);
+    if (!state) return false;
+
+    if (state.role === 'joystick' && touch.identifier === joystickTouchId) {
+      joystickTouchId = null;
       resetMobileJoystick();
-    }
-    if (id === pointerState.look) {
-      releasePointer(renderer.domElement, id);
-      pointerState.look = null;
-      endMobileLook(id);
-    }
-    if (id === pointerState.fire) {
-      releasePointer(mobileFireBtn, id);
-      pointerState.fire = null;
+    } else if (state.role === 'look' && touch.identifier === lookTouchId) {
+      lookTouchId = null;
+      endMobileLook(touch.identifier);
+    } else if (state.role === 'fire' && touch.identifier === fireTouchId) {
+      fireTouchId = null;
       triggerHeld = false;
       triggerHoldStartedAt = 0;
       mobileFireBtn?.classList.remove('pressed');
     }
-  }
-  window.addEventListener('pointerup', releaseGameplayPointer, { passive: true });
-  window.addEventListener('pointercancel', releaseGameplayPointer, { passive: true });
 
-  // Buttons deliberately execute on pointerdown. Waiting for click/touchend on
-  // mobile FPS controls makes them feel laggy and lets browser gesture state
-  // interfere with the action.
-  function bindMobileButton(button, action, { allowWhenLocked = false, latched = false } = {}) {
-    if (!button) return;
-    button.addEventListener('pointerdown', (event) => {
-      if (!validMobilePointer(event) || !mobileSessionActive) return;
-      if (!allowWhenLocked && !mobileGameplayInputAllowed()) return;
-      event.preventDefault();
-      event.stopPropagation();
-      action();
-      if (!latched) flashMobileButton(button);
-      mobileHaptic(5);
-    }, { passive: false });
+    mobileTouches.delete(touch.identifier);
+    return true;
   }
 
-  bindMobileButton(mobilePauseBtn, pauseMobileGame, { allowWhenLocked: true });
-  bindMobileButton(mobileAimBtn, () => {
-    if (currentWeapon().melee || isReloading || sliding || dashTimer > 0) return;
-    mobileAimActive = !mobileAimActive;
-    isAiming = mobileAimActive;
-    mobileAimBtn.classList.toggle('latched', mobileAimActive);
-  }, { latched: true });
-  bindMobileButton(mobileReloadBtn, () => {
-    mobileAimActive = false;
-    isAiming = false;
-    mobileAimBtn?.classList.remove('latched');
-    startReload();
-  });
-  bindMobileButton(mobileJumpBtn, tryJump);
-  bindMobileButton(mobileDashBtn, tryDash);
-  bindMobileButton(mobileCrouchBtn, handleMobileCrouchAction, { latched: true });
-  bindMobileButton(mobileWeaponBtn, cycleMobileWeapon);
-  bindMobileButton(mobileUseBtn, () => tryReadNearbyStoryNote?.());
+  // Capture phase is intentional. HUD/container stacking can no longer stop the
+  // game from seeing a touch first. We only prevent default browser gestures for
+  // touches that belong to a running game.
+  document.addEventListener('touchstart', (event) => {
+    if (!mobileSessionActive) return;
+    let handled = false;
+    for (let i = 0; i < event.changedTouches.length; i++) {
+      handled = startTouch(event.changedTouches.item(i)) || handled;
+    }
+    if (handled) event.preventDefault();
+  }, { passive: false, capture: true });
 
-  // Browser-level gesture prevention is intentionally narrow and only active
-  // during a running match. The menu remains scrollable / tappable normally.
   document.addEventListener('touchmove', (event) => {
-    if (mobileSessionActive) event.preventDefault();
-  }, { passive: false });
-  document.addEventListener('gesturestart', (event) => {
-    if (mobileSessionActive) event.preventDefault();
-  }, { passive: false });
+    if (!mobileSessionActive) return;
+    let handled = false;
+    for (let i = 0; i < event.changedTouches.length; i++) {
+      handled = moveTouch(event.changedTouches.item(i)) || handled;
+    }
+    if (handled) event.preventDefault();
+  }, { passive: false, capture: true });
+
+  const finishTouches = (event) => {
+    let handled = false;
+    for (let i = 0; i < event.changedTouches.length; i++) {
+      handled = endTouch(event.changedTouches.item(i)) || handled;
+    }
+    if (handled) event.preventDefault();
+  };
+  document.addEventListener('touchend', finishTouches, { passive: false, capture: true });
+  document.addEventListener('touchcancel', finishTouches, { passive: false, capture: true });
+
+  // Pointer fallback for touch-capable desktop emulators/WebViews that expose a
+  // coarse pointer but do not dispatch Touch Events. It is disabled on normal
+  // phones to guarantee there is never a duplicate input path.
+  const needsPointerFallback = !('ontouchstart' in window) && navigator.maxTouchPoints === 0;
+  if (needsPointerFallback) {
+    let fallbackRole = null;
+    let fallbackLastX = 0;
+    let fallbackLastY = 0;
+    document.addEventListener('pointerdown', (event) => {
+      if (!mobileSessionActive) return;
+      const fake = { identifier: event.pointerId, clientX: event.clientX, clientY: event.clientY, target: event.target };
+      if (startTouch(fake)) {
+        fallbackRole = mobileTouches.get(event.pointerId)?.role || null;
+        fallbackLastX = event.clientX;
+        fallbackLastY = event.clientY;
+        event.preventDefault();
+      }
+    }, { passive: false, capture: true });
+    document.addEventListener('pointermove', (event) => {
+      if (!mobileSessionActive || !fallbackRole) return;
+      const fake = { identifier: event.pointerId, clientX: event.clientX, clientY: event.clientY, target: event.target };
+      if (moveTouch(fake)) event.preventDefault();
+      fallbackLastX = event.clientX;
+      fallbackLastY = event.clientY;
+    }, { passive: false, capture: true });
+    const endFallback = (event) => {
+      const fake = { identifier: event.pointerId, clientX: event.clientX, clientY: event.clientY, target: event.target };
+      if (endTouch(fake)) event.preventDefault();
+      fallbackRole = null;
+    };
+    document.addEventListener('pointerup', endFallback, { passive: false, capture: true });
+    document.addEventListener('pointercancel', endFallback, { passive: false, capture: true });
+  }
 
   mobileLandscapeBtn?.addEventListener('click', (event) => {
     event.preventDefault();
     requestMobileLandscape();
   });
 
-  function hardResetPointers() {
-    pointerState.joystick = null;
-    pointerState.look = null;
-    pointerState.fire = null;
+  function hardResetMobileTouches() {
+    mobileTouches.clear();
+    joystickTouchId = null;
+    lookTouchId = null;
+    fireTouchId = null;
     resetMobileJoystick();
     mobileLookPointer = null;
     triggerHeld = false;
@@ -5014,30 +5135,36 @@ if (IS_TOUCH_DEVICE) {
   }
 
   window.addEventListener('orientationchange', () => {
-    hardResetPointers();
-    clearMobileInputs();
-    if (mobileSessionActive) setTimeout(() => {
+    hardResetMobileTouches();
+    // Do NOT call clearMobileInputs here: that function also changes latched
+    // crouch/ADS state and previously made orientation transitions look like dead
+    // controls. Only active finger ownership is reset.
+    setTimeout(() => {
       camera.aspect = innerWidth / innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(innerWidth, innerHeight);
-    }, 80);
+    }, 100);
   });
 
+  window.addEventListener('blur', hardResetMobileTouches);
   document.addEventListener('visibilitychange', () => {
     if (document.hidden && mobileSessionActive) pauseMobileGame();
   });
 
-  // Small diagnostics hook. No UI and no gameplay cost; useful if a specific
-  // browser ever reports dead controls again.
+  // Diagnostic hook for real-device testing from Safari/Chrome remote devtools.
   window.__INKBREAK_MOBILE_INPUT__ = () => ({
     active: mobileSessionActive,
-    joystickPointer: pointerState.joystick,
-    lookPointer: pointerState.look,
-    firePointer: pointerState.fire,
+    joystickTouchId,
+    lookTouchId,
+    fireTouchId,
+    touchCount: mobileTouches.size,
     moveX: mobileMoveX,
     moveY: mobileMoveY,
     aiming: mobileAimActive,
-    triggerHeld
+    triggerHeld,
+    storyInputLocked,
+    storyDialogueBlocking,
+    upgradeChoosing
   });
 }
 

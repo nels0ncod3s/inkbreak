@@ -126,3 +126,13 @@ Every firearm has its own silhouette, ammo pool, recoil profile, fire cadence, A
 - Removed competing Touch Events handlers and disabled the legacy invisible look overlay.
 - Story-mode firing no longer depends on Arena round boot state.
 - Added cache-busted asset URLs for mobile input revisions.
+
+## Mobile input V6 reliability pass
+
+The mobile input layer was rebuilt around a single document-level Touch Events router.
+Each active finger receives one role for its lifetime: movement joystick, camera look,
+fire, or one action button. Gameplay hit testing uses the controls' screen rectangles,
+not DOM stacking, so transparent HUD layers cannot intercept look input. Pointer
+capture and the previous competing look-overlay handlers were removed. The joystick
+becomes active synchronously when a mobile match starts and does not wait on
+fullscreen or orientation APIs.
