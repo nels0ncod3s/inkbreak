@@ -67,6 +67,7 @@ const upgradeCardsEl = document.querySelector('#upgrade-cards');
 const upgradeInkEl = document.querySelector('#upgrade-ink');
 const chapterOneCardEl = document.querySelector('#chapter-one-card');
 const chapterTwoCardEl = document.querySelector('#chapter-two-card');
+const chapterThreeCardEl = document.querySelector('#chapter-three-card');
 const awarenessLayerEl = document.querySelector('#awareness-layer');
 const chapterProgressNoteEl = document.querySelector('#chapter-progress-note');
 const chapterCards = [...document.querySelectorAll('.chapter-card')];
@@ -254,12 +255,73 @@ function updateGraphicsLabel() {
 }
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(PAPER);
-scene.fog = new THREE.Fog(PAPER, 34, 116);
 
-const camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.05, 180);
+// ---------- Paper sky / horizon pipeline ----------
+// INKBREAK is intentionally unlit, so a lightweight equirectangular paper panorama
+// gives us a real sky/horizon without importing an HDR environment that fights the art style.
+function createPaperSkyTexture() {
+  const w = (IS_TOUCH_DEVICE && DEVICE_TIER !== 'high') ? 1024 : 2048;
+  const h = w >> 1;
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  const grad = ctx.createLinearGradient(0,0,0,h);
+  grad.addColorStop(0,'#dbe6f0');
+  grad.addColorStop(.38,'#edf0e9');
+  grad.addColorStop(.64,'#f2eee2');
+  grad.addColorStop(1,'#e5dfd0');
+  ctx.fillStyle = grad; ctx.fillRect(0,0,w,h);
+
+  // Sparse ballpoint cloud strokes. They are baked into one texture, therefore no
+  // extra draw calls regardless of how many marks we draw here.
+  ctx.strokeStyle='rgba(23,77,154,.16)';
+  ctx.lineWidth=Math.max(1,w/1024);
+  for(let i=0;i<28;i++){
+    const cx=(i*173)%w, cy=h*(.16+((i*47)%170)/1000);
+    ctx.beginPath();
+    for(let j=0;j<5;j++){
+      const x=cx+j*w*.012;
+      const y=cy+Math.sin(i*1.7+j*1.2)*h*.012;
+      if(j===0)ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+  }
+  // Hand-drawn horizon lines hide the transition into fog and reinforce the page motif.
+  ctx.strokeStyle='rgba(23,77,154,.10)';
+  for(let pass=0;pass<3;pass++){
+    ctx.beginPath();
+    for(let x=0;x<=w;x+=24){
+      const y=h*.63+Math.sin(x*.013+pass)*3+pass*2;
+      if(x===0)ctx.moveTo(x,y); else ctx.lineTo(x,y);
+    }
+    ctx.stroke();
+  }
+  const tex=new THREE.CanvasTexture(canvas);
+  tex.colorSpace=THREE.SRGBColorSpace;
+  tex.mapping=THREE.EquirectangularReflectionMapping;
+  tex.minFilter=THREE.LinearFilter;
+  tex.magFilter=THREE.LinearFilter;
+  tex.generateMipmaps=false;
+  return tex;
+}
+
+const paperSkyTexture = createPaperSkyTexture();
+scene.background = paperSkyTexture;
+scene.fog = new THREE.FogExp2(0xf2eee2, IS_TOUCH_DEVICE ? 0.0135 : 0.0115);
+
+const camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.08, 190);
 camera.position.set(0, 1.72, 16);
 scene.add(camera);
+
+// One cheap world-space haze ring bridges ground fog into the panoramic sky.
+// It follows the player in X/Z only, so all distant story regions share the same horizon.
+const horizonHaze = new THREE.Mesh(
+  new THREE.CylinderGeometry(92, 92, 24, 32, 1, true),
+  new THREE.MeshBasicMaterial({ color: 0xf2eee2, transparent: true, opacity: .20, side: THREE.BackSide, depthWrite: false })
+);
+horizonHaze.position.y = 5.5;
+horizonHaze.frustumCulled = false;
+scene.add(horizonHaze);
 
 const renderer = new THREE.WebGLRenderer({
   antialias: !IS_TOUCH_DEVICE || DEVICE_TIER === 'high',
@@ -290,6 +352,32 @@ const fovSetting = document.querySelector('#fov-setting');
 const fovValue = document.querySelector('#fov-value');
 const volumeSetting = document.querySelector('#volume-setting');
 const volumeValue = document.querySelector('#volume-value');
+const mobileLookSensitivitySetting = document.querySelector('#mobile-look-sensitivity-setting');
+const mobileLookSensitivityValue = document.querySelector('#mobile-look-sensitivity-value');
+const mobileFireSensitivitySetting = document.querySelector('#mobile-fire-sensitivity-setting');
+const mobileFireSensitivityValue = document.querySelector('#mobile-fire-sensitivity-value');
+const fireDragAimSetting = document.querySelector('#fire-drag-aim-setting');
+const fireDragAimValue = document.querySelector('#fire-drag-aim-value');
+
+const openHudLayoutBtn = document.querySelector('#open-hud-layout-btn');
+const hudLayoutBackBtn = document.querySelector('#hud-layout-back-btn');
+const customizeHudBtn = document.querySelector('#customize-hud-btn');
+const saveHudLayoutBtn = document.querySelector('#save-hud-layout-btn');
+const resetHudLayoutBtn = document.querySelector('#reset-hud-layout-btn');
+const hudPresetSelect = document.querySelector('#hud-preset-select');
+const hudGridSnapSetting = document.querySelector('#hud-grid-snap');
+const hudEdgeSnapSetting = document.querySelector('#hud-edge-snap');
+const hudEditorEl = document.querySelector('#hud-editor');
+const hudEditorSaveBtn = document.querySelector('#hud-editor-save');
+const hudEditorDoneBtn = document.querySelector('#hud-editor-done');
+const hudElementSelect = document.querySelector('#hud-element-select');
+const hudSelectedLabel = document.querySelector('#hud-selected-label');
+const hudScaleSlider = document.querySelector('#hud-scale-slider');
+const hudScaleValue = document.querySelector('#hud-scale-value');
+const hudOpacitySlider = document.querySelector('#hud-opacity-slider');
+const hudOpacityValue = document.querySelector('#hud-opacity-value');
+const hudEditorGridSnap = document.querySelector('#hud-editor-grid-snap');
+const hudEditorEdgeSnap = document.querySelector('#hud-editor-edge-snap');
 
 let gameStarted = false;
 let gameMode = 'arena';
@@ -338,6 +426,43 @@ volumeSetting?.addEventListener('input', () => {
   setMasterVolume(value);
 });
 
+function readStoredNumber(key, fallback, min, max) {
+  try {
+    const value = Number(localStorage.getItem(key));
+    return Number.isFinite(value) ? THREE.MathUtils.clamp(value, min, max) : fallback;
+  } catch { return fallback; }
+}
+
+let mobileLookSensitivityMultiplier = readStoredNumber('inkbreak_mobile_look_sens', 1.0, .4, 2);
+let mobileFireSensitivityMultiplier = readStoredNumber('inkbreak_mobile_fire_sens', .82, .35, 1.6);
+if (mobileLookSensitivitySetting) mobileLookSensitivitySetting.value = mobileLookSensitivityMultiplier.toFixed(2);
+if (mobileFireSensitivitySetting) mobileFireSensitivitySetting.value = mobileFireSensitivityMultiplier.toFixed(2);
+if (mobileLookSensitivityValue) mobileLookSensitivityValue.textContent = `${mobileLookSensitivityMultiplier.toFixed(2)}×`;
+if (mobileFireSensitivityValue) mobileFireSensitivityValue.textContent = `${mobileFireSensitivityMultiplier.toFixed(2)}×`;
+
+mobileLookSensitivitySetting?.addEventListener('input', () => {
+  mobileLookSensitivityMultiplier = Number(mobileLookSensitivitySetting.value);
+  mobileLookSensitivityValue.textContent = `${mobileLookSensitivityMultiplier.toFixed(2)}×`;
+  try { localStorage.setItem('inkbreak_mobile_look_sens', String(mobileLookSensitivityMultiplier)); } catch {}
+});
+
+mobileFireSensitivitySetting?.addEventListener('input', () => {
+  mobileFireSensitivityMultiplier = Number(mobileFireSensitivitySetting.value);
+  mobileFireSensitivityValue.textContent = `${mobileFireSensitivityMultiplier.toFixed(2)}×`;
+  try { localStorage.setItem('inkbreak_mobile_fire_sens', String(mobileFireSensitivityMultiplier)); } catch {}
+});
+
+let fireDragAimEnabled = (() => {
+  try { return localStorage.getItem('inkbreak_fire_drag_aim') !== '0'; } catch { return true; }
+})();
+if (fireDragAimSetting) fireDragAimSetting.checked = fireDragAimEnabled;
+if (fireDragAimValue) fireDragAimValue.textContent = fireDragAimEnabled ? 'ON' : 'OFF';
+fireDragAimSetting?.addEventListener('change', () => {
+  fireDragAimEnabled = fireDragAimSetting.checked;
+  fireDragAimValue.textContent = fireDragAimEnabled ? 'ON' : 'OFF';
+  try { localStorage.setItem('inkbreak_fire_drag_aim', fireDragAimEnabled ? '1' : '0'); } catch {}
+});
+
 if (graphicsSetting) {
   graphicsSetting.value = graphicsMode;
   graphicsSetting.addEventListener('change', () => {
@@ -358,21 +483,335 @@ if (graphicsSetting) {
   updateGraphicsLabel();
 }
 
+
+// ---------- Mobile HUD layout system ----------
+// Layout values are normalized viewport percentages plus per-element scale/alpha.
+// They are device-independent and then clamped against CSS safe-area insets.
+const HUD_LAYOUT_STORAGE_KEY = 'inkbreak_hud_layout_v1';
+const HUD_LAYOUT_VERSION = 1;
+const HUD_GRID_STEP = 2.5; // viewport percent
+let hudEditing = false;
+let hudSelectedId = 'fire';
+let hudDragState = null;
+
+const hudTargets = {
+  joystick: { el: document.querySelector('#mobile-left-controls'), label: 'MOVEMENT JOYSTICK' },
+  look: { el: mobileLookZoneEl, label: 'AIM / LOOK AREA', lookArea: true },
+  fire: { el: mobileFireBtn, label: 'FIRE' },
+  aim: { el: mobileAimBtn, label: 'ADS / AIM' },
+  reload: { el: mobileReloadBtn, label: 'RELOAD' },
+  jump: { el: mobileJumpBtn, label: 'JUMP' },
+  crouch: { el: mobileCrouchBtn, label: 'CROUCH / SLIDE' },
+  dash: { el: mobileDashBtn, label: 'DASH' },
+  weapon: { el: mobileWeaponBtn, label: 'WEAPON SLOT' },
+  status: { el: document.querySelector('#bottom-left'), label: 'HEALTH / STAMINA' }
+};
+
+const HUD_PRESETS = {
+  thumb2: {
+    joystick:{x:13,y:75,scale:1.00,opacity:.92}, look:{x:55,y:50,scale:1.00,opacity:.25},
+    fire:{x:91,y:76,scale:1.00,opacity:.88}, aim:{x:89,y:53,scale:.94,opacity:.86}, reload:{x:75,y:37,scale:.84,opacity:.80},
+    jump:{x:77,y:57,scale:.92,opacity:.84}, crouch:{x:78,y:78,scale:.88,opacity:.82}, dash:{x:66,y:72,scale:.84,opacity:.78},
+    weapon:{x:66,y:47,scale:.80,opacity:.76}, status:{x:18,y:15,scale:.82,opacity:.92}
+  },
+  three: {
+    joystick:{x:13,y:75,scale:1.00,opacity:.92}, look:{x:55,y:50,scale:1.00,opacity:.25},
+    fire:{x:91,y:21,scale:.92,opacity:.88}, aim:{x:90,y:58,scale:.92,opacity:.85}, reload:{x:78,y:35,scale:.82,opacity:.78},
+    jump:{x:79,y:72,scale:.90,opacity:.84}, crouch:{x:68,y:80,scale:.86,opacity:.80}, dash:{x:65,y:62,scale:.84,opacity:.78},
+    weapon:{x:67,y:41,scale:.78,opacity:.74}, status:{x:18,y:15,scale:.82,opacity:.92}
+  },
+  four: {
+    joystick:{x:13,y:75,scale:.96,opacity:.90}, look:{x:55,y:50,scale:1.00,opacity:.22},
+    fire:{x:91,y:17,scale:.88,opacity:.86}, aim:{x:74,y:17,scale:.82,opacity:.82}, reload:{x:60,y:18,scale:.72,opacity:.74},
+    jump:{x:90,y:70,scale:.86,opacity:.82}, crouch:{x:78,y:79,scale:.82,opacity:.78}, dash:{x:67,y:71,scale:.80,opacity:.76},
+    weapon:{x:67,y:49,scale:.74,opacity:.72}, status:{x:18,y:15,scale:.80,opacity:.90}
+  }
+};
+
+function cloneHudLayout(layout) {
+  return JSON.parse(JSON.stringify(layout));
+}
+
+function normalizeHudConfig(config, fallback) {
+  return {
+    x: THREE.MathUtils.clamp(Number(config?.x ?? fallback.x), 0, 100),
+    y: THREE.MathUtils.clamp(Number(config?.y ?? fallback.y), 0, 100),
+    scale: THREE.MathUtils.clamp(Number(config?.scale ?? fallback.scale), .5, 2),
+    opacity: THREE.MathUtils.clamp(Number(config?.opacity ?? fallback.opacity), .2, 1)
+  };
+}
+
+function loadHudLayout() {
+  const base = cloneHudLayout(HUD_PRESETS.thumb2);
+  try {
+    const parsed = JSON.parse(localStorage.getItem(HUD_LAYOUT_STORAGE_KEY) || 'null');
+    if (!parsed || parsed.version !== HUD_LAYOUT_VERSION || !parsed.elements) return { version:HUD_LAYOUT_VERSION, preset:'thumb2', elements:base };
+    for (const [id, fallback] of Object.entries(base)) base[id] = normalizeHudConfig(parsed.elements[id], fallback);
+    return { version:HUD_LAYOUT_VERSION, preset:parsed.preset || 'custom', elements:base };
+  } catch {
+    return { version:HUD_LAYOUT_VERSION, preset:'thumb2', elements:base };
+  }
+}
+
+let hudLayout = loadHudLayout();
+let hudWorkingLayout = cloneHudLayout(hudLayout);
+
+function getSafeInsetPx(name) {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(`--inkbreak-safe-${name}`);
+  const parsed = parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function hudClampPoint(id, x, y, scale, useEdgeSnap = true) {
+  const target = hudTargets[id];
+  if (!target?.el) return {x,y};
+  const vw = Math.max(1, innerWidth), vh = Math.max(1, innerHeight);
+  const safeL = getSafeInsetPx('left') + 7;
+  const safeR = getSafeInsetPx('right') + 7;
+  const safeT = getSafeInsetPx('top') + 7;
+  const safeB = getSafeInsetPx('bottom') + 7;
+
+  // Look area is intentionally allowed to fill/overrun the viewport.
+  if (target.lookArea) return { x:THREE.MathUtils.clamp(x, 25, 75), y:THREE.MathUtils.clamp(y, 25, 75) };
+
+  const baseW = Math.max(34, target.el.offsetWidth || target.el.getBoundingClientRect().width || 60);
+  const baseH = Math.max(28, target.el.offsetHeight || target.el.getBoundingClientRect().height || 60);
+  const halfXPct = ((baseW * scale * .5 + safeL) / vw) * 100;
+  const halfYPct = ((baseH * scale * .5 + safeT) / vh) * 100;
+  const rightPct = 100 - ((baseW * scale * .5 + safeR) / vw) * 100;
+  const bottomPct = 100 - ((baseH * scale * .5 + safeB) / vh) * 100;
+  let nx = THREE.MathUtils.clamp(x, Math.min(49, halfXPct), Math.max(51, rightPct));
+  let ny = THREE.MathUtils.clamp(y, Math.min(49, halfYPct), Math.max(51, bottomPct));
+
+  if (useEdgeSnap) {
+    const threshold = 2.8;
+    if (Math.abs(nx-halfXPct) < threshold) nx = halfXPct;
+    if (Math.abs(nx-rightPct) < threshold) nx = rightPct;
+    if (Math.abs(ny-halfYPct) < threshold) ny = halfYPct;
+    if (Math.abs(ny-bottomPct) < threshold) ny = bottomPct;
+  }
+  return {x:nx,y:ny};
+}
+
+function setHudElementStyle(id, config) {
+  const target = hudTargets[id];
+  const el = target?.el;
+  if (!el) return;
+  const safe = hudClampPoint(id, config.x, config.y, config.scale, hudEdgeSnapSetting?.checked ?? true);
+  config.x = safe.x; config.y = safe.y;
+
+  el.style.setProperty('left', `${config.x}%`, 'important');
+  el.style.setProperty('top', `${config.y}%`, 'important');
+  el.style.setProperty('right', 'auto', 'important');
+  el.style.setProperty('bottom', 'auto', 'important');
+  const transform = `translate(-50%, -50%) scale(${config.scale})`;
+  el.style.setProperty('transform', transform, 'important');
+  el.style.setProperty('opacity', target.lookArea && !hudEditing ? '0' : String(config.opacity), 'important');
+
+  if (target.lookArea) {
+    el.style.setProperty('width', '100vw', 'important');
+    el.style.setProperty('height', '100vh', 'important');
+    el.style.setProperty('z-index', '1', 'important');
+  }
+}
+
+function applyHudLayout(layout = hudWorkingLayout) {
+  if (!layout?.elements) return;
+  document.body.classList.add('hud-layout-applied');
+  Object.entries(layout.elements).forEach(([id,cfg]) => setHudElementStyle(id,cfg));
+}
+
+function clearHudLayoutInlineForDesktop() {
+  if (IS_TOUCH_DEVICE || hudEditing) return;
+  document.body.classList.remove('hud-layout-applied');
+  for (const {el} of Object.values(hudTargets)) {
+    if (!el) continue;
+    ['left','top','right','bottom','transform','opacity','width','height','z-index'].forEach(prop => el.style.removeProperty(prop));
+  }
+}
+
+function saveHudLayout(layout = hudWorkingLayout) {
+  hudLayout = cloneHudLayout(layout);
+  hudLayout.version = HUD_LAYOUT_VERSION;
+  hudLayout.preset = 'custom';
+  hudWorkingLayout = cloneHudLayout(hudLayout);
+  try { localStorage.setItem(HUD_LAYOUT_STORAGE_KEY, JSON.stringify(hudLayout)); } catch {}
+  if (hudPresetSelect) hudPresetSelect.value = 'custom';
+  applyHudLayout(hudLayout);
+}
+
+function applyHudPreset(name, persist = false) {
+  const preset = HUD_PRESETS[name] || HUD_PRESETS.thumb2;
+  hudWorkingLayout = { version:HUD_LAYOUT_VERSION, preset:name, elements:cloneHudLayout(preset) };
+  if (hudPresetSelect) hudPresetSelect.value = name;
+  applyHudLayout(hudWorkingLayout);
+  if (persist) saveHudLayout(hudWorkingLayout);
+  syncHudEditorControls();
+}
+
+function resetHudLayout() {
+  hudWorkingLayout = { version:HUD_LAYOUT_VERSION, preset:'thumb2', elements:cloneHudLayout(HUD_PRESETS.thumb2) };
+  hudLayout = cloneHudLayout(hudWorkingLayout);
+  try { localStorage.removeItem(HUD_LAYOUT_STORAGE_KEY); } catch {}
+  if (hudPresetSelect) hudPresetSelect.value = 'thumb2';
+  applyHudLayout(hudWorkingLayout);
+  syncHudEditorControls();
+}
+
+function syncHudEditorControls() {
+  const cfg = hudWorkingLayout?.elements?.[hudSelectedId];
+  if (!cfg) return;
+  if (hudElementSelect) hudElementSelect.value = hudSelectedId;
+  if (hudSelectedLabel) hudSelectedLabel.textContent = hudTargets[hudSelectedId]?.label || hudSelectedId.toUpperCase();
+  if (hudScaleSlider) hudScaleSlider.value = String(Math.round(cfg.scale*100));
+  if (hudScaleValue) hudScaleValue.textContent = `${Math.round(cfg.scale*100)}%`;
+  if (hudOpacitySlider) hudOpacitySlider.value = String(Math.round(cfg.opacity*100));
+  if (hudOpacityValue) hudOpacityValue.textContent = `${Math.round(cfg.opacity*100)}%`;
+  document.querySelectorAll('.hud-edit-target').forEach(el => el.classList.toggle('hud-selected', el.dataset.hudId === hudSelectedId));
+}
+
+function setHudSelected(id) {
+  if (!hudTargets[id]?.el) return;
+  hudSelectedId = id;
+  syncHudEditorControls();
+}
+
+function enterHudEditor() {
+  // Editor always works from the current saved/working layout, while gameplay stays paused.
+  if (IS_TOUCH_DEVICE && mobileSessionActive) pauseMobileGame();
+  hudEditing = true;
+  document.body.classList.add('hud-editing', 'hud-layout-applied');
+  document.body.classList.toggle('hud-grid-enabled', hudGridSnapSetting?.checked ?? true);
+  menu.classList.remove('visible');
+  hudEditorEl?.classList.add('visible');
+  hudEditorEl?.setAttribute('aria-hidden','false');
+  for (const [id,target] of Object.entries(hudTargets)) {
+    if (!target.el) continue;
+    target.el.dataset.hudId = id;
+    target.el.classList.add('hud-edit-target');
+  }
+  applyHudLayout(hudWorkingLayout);
+  setHudSelected(hudSelectedId);
+}
+
+function exitHudEditor() {
+  hudEditing = false;
+  hudDragState = null;
+  document.body.classList.remove('hud-editing','hud-grid-enabled');
+  hudEditorEl?.classList.remove('visible');
+  hudEditorEl?.setAttribute('aria-hidden','true');
+  document.querySelectorAll('.hud-edit-target').forEach(el => el.classList.remove('hud-edit-target','hud-selected'));
+  applyHudLayout(hudWorkingLayout);
+  clearHudLayoutInlineForDesktop();
+  showMenuPanel('settings', false);
+}
+
+function snapHudValue(value, enabled) {
+  return enabled ? Math.round(value / HUD_GRID_STEP) * HUD_GRID_STEP : value;
+}
+
+function onHudEditorPointerDown(event) {
+  if (!hudEditing || event.button > 0) return;
+  const targetEl = event.target.closest?.('[data-hud-id]');
+  if (!targetEl) return;
+  const id = targetEl.dataset.hudId;
+  const cfg = hudWorkingLayout?.elements?.[id];
+  if (!cfg) return;
+  event.preventDefault();
+  setHudSelected(id);
+  hudDragState = { id, pointerId:event.pointerId, startX:event.clientX, startY:event.clientY, x:cfg.x, y:cfg.y };
+  try { targetEl.setPointerCapture?.(event.pointerId); } catch {}
+}
+
+function onHudEditorPointerMove(event) {
+  if (!hudEditing || !hudDragState || event.pointerId !== hudDragState.pointerId) return;
+  event.preventDefault();
+  const cfg = hudWorkingLayout.elements[hudDragState.id];
+  let x = hudDragState.x + ((event.clientX-hudDragState.startX)/Math.max(1,innerWidth))*100;
+  let y = hudDragState.y + ((event.clientY-hudDragState.startY)/Math.max(1,innerHeight))*100;
+  const grid = hudEditorGridSnap?.checked ?? hudGridSnapSetting?.checked ?? true;
+  x = snapHudValue(x, grid); y = snapHudValue(y, grid);
+  const clamped = hudClampPoint(hudDragState.id, x, y, cfg.scale, hudEditorEdgeSnap?.checked ?? true);
+  cfg.x = clamped.x; cfg.y = clamped.y;
+  setHudElementStyle(hudDragState.id,cfg);
+}
+
+function onHudEditorPointerUp(event) {
+  if (!hudDragState || event.pointerId !== hudDragState.pointerId) return;
+  hudDragState = null;
+}
+
+document.addEventListener('pointerdown', onHudEditorPointerDown, {capture:true});
+document.addEventListener('pointermove', onHudEditorPointerMove, {capture:true});
+document.addEventListener('pointerup', onHudEditorPointerUp, {capture:true});
+document.addEventListener('pointercancel', onHudEditorPointerUp, {capture:true});
+
+openHudLayoutBtn?.addEventListener('click', () => showMenuPanel('hud-layout', false));
+hudLayoutBackBtn?.addEventListener('click', () => showMenuPanel('settings', false));
+customizeHudBtn?.addEventListener('click', enterHudEditor);
+saveHudLayoutBtn?.addEventListener('click', () => saveHudLayout(hudWorkingLayout));
+resetHudLayoutBtn?.addEventListener('click', resetHudLayout);
+hudEditorSaveBtn?.addEventListener('click', () => saveHudLayout(hudWorkingLayout));
+hudEditorDoneBtn?.addEventListener('click', exitHudEditor);
+
+hudPresetSelect?.addEventListener('change', () => {
+  const value = hudPresetSelect.value;
+  if (value === 'custom') {
+    hudWorkingLayout = cloneHudLayout(hudLayout);
+    applyHudLayout(hudWorkingLayout);
+    syncHudEditorControls();
+  } else applyHudPreset(value, false);
+});
+
+function syncHudSnapToggles(source, target) {
+  target.checked = source.checked;
+  document.body.classList.toggle('hud-grid-enabled', hudEditing && (hudEditorGridSnap?.checked ?? true));
+}
+hudGridSnapSetting?.addEventListener('change', () => syncHudSnapToggles(hudGridSnapSetting, hudEditorGridSnap));
+hudEditorGridSnap?.addEventListener('change', () => syncHudSnapToggles(hudEditorGridSnap, hudGridSnapSetting));
+hudEdgeSnapSetting?.addEventListener('change', () => syncHudSnapToggles(hudEdgeSnapSetting, hudEditorEdgeSnap));
+hudEditorEdgeSnap?.addEventListener('change', () => syncHudSnapToggles(hudEditorEdgeSnap, hudEdgeSnapSetting));
+
+hudElementSelect?.addEventListener('change', () => setHudSelected(hudElementSelect.value));
+hudScaleSlider?.addEventListener('input', () => {
+  const cfg = hudWorkingLayout?.elements?.[hudSelectedId]; if (!cfg) return;
+  cfg.scale = THREE.MathUtils.clamp(Number(hudScaleSlider.value)/100,.5,2);
+  hudScaleValue.textContent = `${Math.round(cfg.scale*100)}%`;
+  setHudElementStyle(hudSelectedId,cfg);
+});
+hudOpacitySlider?.addEventListener('input', () => {
+  const cfg = hudWorkingLayout?.elements?.[hudSelectedId]; if (!cfg) return;
+  cfg.opacity = THREE.MathUtils.clamp(Number(hudOpacitySlider.value)/100,.2,1);
+  hudOpacityValue.textContent = `${Math.round(cfg.opacity*100)}%`;
+  setHudElementStyle(hudSelectedId,cfg);
+});
+
+if (hudGridSnapSetting && hudEditorGridSnap) hudEditorGridSnap.checked = hudGridSnapSetting.checked;
+if (hudEdgeSnapSetting && hudEditorEdgeSnap) hudEditorEdgeSnap.checked = hudEdgeSnapSetting.checked;
+if (hudPresetSelect) hudPresetSelect.value = hudLayout.preset in HUD_PRESETS ? hudLayout.preset : 'custom';
+if (IS_TOUCH_DEVICE) applyHudLayout(hudLayout);
+window.addEventListener('resize', () => { if (IS_TOUCH_DEVICE || hudEditing) applyHudLayout(hudWorkingLayout); });
+
 function refreshChapterMenu() {
   const chapterOneUnlocked = storyProgress >= 1;
   const chapterTwoUnlocked = storyProgress >= 2;
+  const chapterThreeUnlocked = storyProgress >= 3;
   chapterOneCardEl?.classList.toggle('locked', !chapterOneUnlocked);
   chapterTwoCardEl?.classList.toggle('locked', !chapterTwoUnlocked);
+  chapterThreeCardEl?.classList.toggle('locked', !chapterThreeUnlocked);
   if (chapterProgressNoteEl) {
-    chapterProgressNoteEl.textContent = chapterTwoUnlocked
-      ? 'Corrections unlocked // story progress is saved in this browser.'
-      : chapterOneUnlocked
-        ? 'Complete Wrong Page to unlock Corrections.'
-        : 'Complete The Margin to unlock Wrong Page.';
+    chapterProgressNoteEl.textContent = chapterThreeUnlocked
+      ? 'The Draftworks unlocked // story progress is saved in this browser.'
+      : chapterTwoUnlocked
+        ? 'Complete Corrections to unlock The Draftworks.'
+        : chapterOneUnlocked
+          ? 'Complete Wrong Page to unlock Corrections.'
+          : 'Complete The Margin to unlock Wrong Page.';
   }
   if (storyBtn) {
-    storyBtn.textContent = chapterTwoUnlocked
-      ? 'CONTINUE STORY // CORRECTIONS'
+    storyBtn.textContent = chapterThreeUnlocked
+      ? 'CONTINUE STORY // THE DRAFTWORKS'
+      : chapterTwoUnlocked ? 'CONTINUE STORY // CORRECTIONS'
       : chapterOneUnlocked ? 'CONTINUE STORY // WRONG PAGE' : 'STORY MODE // THE MARGIN';
   }
 }
@@ -395,11 +834,12 @@ function launchGameMode(mode, chapter = selectedStoryChapter) {
 }
 
 playBtn.addEventListener('click', () => launchGameMode('arena'));
-storyBtn?.addEventListener('click', () => launchGameMode('story', storyProgress >= 2 ? 2 : (storyProgress >= 1 ? 1 : 0)));
+storyBtn?.addEventListener('click', () => launchGameMode('story', storyProgress >= 3 ? 3 : (storyProgress >= 2 ? 2 : (storyProgress >= 1 ? 1 : 0))));
 chapterCards.forEach(card => card.addEventListener('click', () => {
   const chapter = Number(card.dataset.chapter || 0);
   if (chapter === 1 && storyProgress < 1) return;
   if (chapter === 2 && storyProgress < 2) return;
+  if (chapter === 3 && storyProgress < 3) return;
   launchGameMode('story', chapter);
 }));
 refreshChapterMenu();
@@ -629,11 +1069,21 @@ function makeSketchBox({
   sketchMeshes.push(mesh);
 
   if (collider) {
-    const inset = Math.min(.035, Math.min(w,d) * .035);
+    // Render geometry may be thin or slightly rotated for the loose pen aesthetic,
+    // but gameplay collision stays as a thick primitive AABB. This prevents a capsule
+    // from reaching the visible surface before physics has a meaningful solid depth.
+    const wallLike = h >= 2.0 && Math.min(w,d) < .72;
+    const baseW = (wallLike && w < d) ? Math.max(w,.44) : w;
+    const baseD = (wallLike && d <= w) ? Math.max(d,.44) : d;
+    const c = Math.abs(Math.cos(rotationY)), sn = Math.abs(Math.sin(rotationY));
+    const colliderW = baseW*c + baseD*sn;
+    const colliderD = baseW*sn + baseD*c;
+    const pad = wallLike ? .025 : .012;
     const colliderBox = new THREE.Box3(
-      new THREE.Vector3(x - w/2 + inset, y - h/2, z - d/2 + inset),
-      new THREE.Vector3(x + w/2 - inset, y + h/2, z + d/2 - inset)
+      new THREE.Vector3(x - colliderW/2 - pad, y - h/2, z - colliderD/2 - pad),
+      new THREE.Vector3(x + colliderW/2 + pad, y + h/2, z + colliderD/2 + pad)
     );
+    colliderBox.userData = { wallLike, source: mesh };
     mesh.userData.colliderBox = colliderBox;
     colliders.push(colliderBox);
     markColliderGridDirty();
@@ -712,7 +1162,7 @@ function addHatching(mesh, w, h, d) {
 
 function activeRenderRegion() {
   if (!gameStarted || gameMode === 'arena') return 'arena';
-  return `story${Math.max(0, Math.min(2, selectedStoryChapter))}`;
+  return `story${Math.max(0, Math.min(3, selectedStoryChapter))}`;
 }
 
 function updateEnvironmentLOD(now) {
@@ -1177,9 +1627,66 @@ function buildStoryTwoMap() {
 }
 
 
-const storyChapterBuilt = [false,false,false];
+
+// ---------- Story Chapter Three // The Draftworks ----------
+const STORY_THREE_X = 480;
+const STORY_THREE_Z = 0;
+const STORY_THREE_SIZE_X = 78;
+const STORY_THREE_SIZE_Z = 94;
+const STORY_THREE_SPAWN = new THREE.Vector3(STORY_THREE_X, 1.72, 40);
+const STORY_THREE_BENCH = new THREE.Vector3(STORY_THREE_X - 7, 0, 27);
+const STORY_THREE_ANCHORS = [
+  new THREE.Vector3(STORY_THREE_X - 13,0,12),
+  new THREE.Vector3(STORY_THREE_X + 12,0,-1),
+  new THREE.Vector3(STORY_THREE_X - 8,0,-17)
+];
+const STORY_THREE_FOUNDRY = new THREE.Vector3(STORY_THREE_X + 4,0,-29);
+const STORY_THREE_EXIT = new THREE.Vector3(STORY_THREE_X,0,-40);
+let storyThreeAnchorIndex = 0;
+let storyThreeStormTriggered = false;
+let storyThreeBossPhase = 0;
+
+function buildStoryThreeMap() {
+  makeSketchBox({x:STORY_THREE_X,y:-.18,z:STORY_THREE_Z,w:STORY_THREE_SIZE_X,h:.35,d:STORY_THREE_SIZE_Z,collider:false,jitter:false});
+  buildGridPatch(STORY_THREE_X,STORY_THREE_Z,STORY_THREE_SIZE_X,STORY_THREE_SIZE_Z);
+  const hx=STORY_THREE_SIZE_X/2, hz=STORY_THREE_SIZE_Z/2;
+  makeSketchBox({x:STORY_THREE_X,y:3.4,z:STORY_THREE_Z-hz-.5,w:STORY_THREE_SIZE_X+2,h:6.8,d:1,shade:true});
+  makeSketchBox({x:STORY_THREE_X,y:3.4,z:STORY_THREE_Z+hz+.5,w:STORY_THREE_SIZE_X+2,h:6.8,d:1,shade:true});
+  makeSketchBox({x:STORY_THREE_X-hx-.5,y:3.4,z:STORY_THREE_Z,w:1,h:6.8,d:STORY_THREE_SIZE_Z+2,shade:true});
+  makeSketchBox({x:STORY_THREE_X+hx+.5,y:3.4,z:STORY_THREE_Z,w:1,h:6.8,d:STORY_THREE_SIZE_Z+2,shade:true});
+
+  // Broken workshop bays create long/short sightline alternation rather than another corridor map.
+  const bays=[
+    [-18,29,10,5.2,6], [17,28,11,4.0,7], [-23,13,8,6.4,10], [20,12,10,3.6,7],
+    [-18,-2,12,4.5,6], [19,-6,8,6.2,10], [-22,-20,9,3.4,7], [20,-22,11,5.5,7],
+    [-15,-35,8,6.0,7], [16,-34,9,4.2,8]
+  ];
+  bays.forEach(([dx,z,w,h,d],i)=>makeSketchBox({x:STORY_THREE_X+dx,y:h/2,z,w,h,d,shade:i%2===0,rotationY:(i%3-1)*.018}));
+
+  // Central drafting tables and incomplete scaffolds.
+  [[-7,24,5,1.1,2.2],[7,18,4.5,.9,2],[-4,6,6,1.2,2.2],[6,-11,5,.9,2.4],[-3,-27,7,1.1,2.0]].forEach(([dx,z,w,h,d],i)=>
+    makeSketchBox({x:STORY_THREE_X+dx,y:h/2,z,w,h,d,shade:i%2===0,rotationY:(i%2?.08:-.06)}));
+
+  // Three line anchors. Activating them is a chapter mechanic, not decorative terminal spam.
+  STORY_THREE_ANCHORS.forEach((a,i)=>{
+    makeSketchBox({x:a.x,y:.86,z:a.z,w:1.5,h:1.72,d:1.5,shade:i%2===0});
+    makeSketchBox({x:a.x,y:2.0,z:a.z,w:.18,h:2.4,d:.18,shade:true});
+    makeLabel(`LINE ANCHOR ${i+1}`,new THREE.Vector3(a.x,3.25,a.z),0,.40);
+  });
+  makeSketchBox({x:STORY_THREE_BENCH.x,y:.72,z:STORY_THREE_BENCH.z,w:3.4,h:1.44,d:2.2,shade:true});
+  makeLabel('REPAIR BENCH',new THREE.Vector3(STORY_THREE_BENCH.x,2.45,STORY_THREE_BENCH.z),0,.42);
+  makeSketchBox({x:STORY_THREE_FOUNDRY.x,y:.82,z:STORY_THREE_FOUNDRY.z,w:2.4,h:1.64,d:2.4,shade:true});
+  makeLabel('DRAFT FOUNDRY',new THREE.Vector3(STORY_THREE_FOUNDRY.x,2.75,STORY_THREE_FOUNDRY.z),0,.48);
+
+  makeLabel('THE DRAFTWORKS',new THREE.Vector3(STORY_THREE_X,4.8,36),0,.88);
+  makeLabel('NOTHING HERE IS FINISHED',new THREE.Vector3(STORY_THREE_X-2,3.1,19),0,.42);
+  makeLabel('REPAIR ≠ CREATION',new THREE.Vector3(STORY_THREE_X+9,3.0,-13),0,.40);
+  makeLabel('DO NOT REDACT THE SOURCE',new THREE.Vector3(STORY_THREE_X-8,3.0,-31),0,.40);
+}
+
+const storyChapterBuilt = [false,false,false,false];
 function ensureStoryChapterBuilt(chapter) {
-  const ch = Math.max(0, Math.min(2, Number(chapter)||0));
+  const ch = Math.max(0, Math.min(3, Number(chapter)||0));
   if (storyChapterBuilt[ch]) return;
   beginStaticBoxBatch(`story${ch}`);
   if (ch === 0) {
@@ -1189,11 +1696,16 @@ function ensureStoryChapterBuilt(chapter) {
     createStoryNote(STORY_ONE_X-10, 15, 'FIELD NOTE // PAGE 17', 'Correctors do not arrive before a boundary failure. If they are already waiting, the page knew the breach was coming.',1);
     createStoryNote(STORY_ONE_X+9, -3, 'FIELD NOTE // REPAIR LOG', 'The Artist is not creating new matter. Every observed stroke matches missing geometry. It may be repairing damage.',1);
     createStoryNote(STORY_ONE_X-4, -23, 'FIELD NOTE // RADIO', 'MARA transmission timestamp: three days before Margin District existed. Source location unresolved.',1);
-  } else {
+  } else if (ch === 2) {
     buildStoryTwoMap();
     createStoryNote(STORY_TWO_X-11, 27, 'ARCHIVE MEMO // INTAKE', 'Every correction begins with classification. Draft. Copy. Borrowed line. The last category has no approved disposal method.',2);
     createStoryNote(STORY_TWO_X+10, 5, 'ARCHIVE LOG // MARA', 'Voiceprint MARA appears in six pages simultaneously. No source body located. Recommendation: treat signal as persistent annotation, not resident.',2);
     createStoryNote(STORY_TWO_X-9, -19, 'ARCHIVE LOG // ARTIST', 'Repair entity continues replacing erased geometry. Hostile designation disputed. The page survives longer when it is active.',2);
+  } else {
+    buildStoryThreeMap();
+    createStoryNote(STORY_THREE_X-15, 31, 'DRAFT LOG // FIRST HAND', 'The Artist never authored a page. It restores strokes from a source layer we cannot access.',3);
+    createStoryNote(STORY_THREE_X+17, 7, 'DRAFT LOG // BORROWED LINE', 'Borrowed lines survive correction because their source exists elsewhere. Sever the source and the line collapses.',3);
+    createStoryNote(STORY_THREE_X-14, -23, 'DRAFT LOG // MARA', 'Persistent annotation MARA predates the current page graph. Possible routing process. Possible witness. Do not erase until origin is known.',3);
   }
   endStaticBoxBatch();
   if (ch === 1) buildStoryOneInteractiveEnvironment();
@@ -1696,6 +2208,11 @@ const ENEMY_TYPES = {
     range: 34, accuracyMin: .38, accuracyMax: .60, damageMin: 7, damageMax: 10,
     shotMin: 920, shotMax: 1260
   },
+  redactor: {
+    label: 'THE REDACTOR', hp: 560, scale: [1.58, 1.52, 1.58], behavior: 'guardian', speed: 1.36,
+    range: 36, accuracyMin: .42, accuracyMax: .64, damageMin: 8, damageMax: 12,
+    shotMin: 760, shotMax: 1080
+  },
   guardian: {
     label: 'PAGE GUARDIAN', hp: 430, scale: [1.55, 1.48, 1.55], behavior: 'guardian', speed: 1.05,
     range: 32, accuracyMin: .35, accuracyMax: .58, damageMin: 7, damageMax: 10,
@@ -1943,7 +2460,7 @@ function playGunSound(id) {
 }
 
 function playEnemyShotSound(type) {
-  const heavy = type === 'heavy' || type === 'artist' || type === 'guardian' || type === 'proofreader';
+  const heavy = type === 'heavy' || type === 'artist' || type === 'guardian' || type === 'proofreader' || type === 'redactor';
   playNoiseBurst(heavy ? .034 : .022, heavy ? .09 : .055, heavy ? 900 : 1450);
   playTone(heavy ? 82 : 118, heavy ? 48 : 72, heavy ? .08 : .05, heavy ? .022 : .014, 'square');
 }
@@ -2230,7 +2747,7 @@ function pushDeathChunk({position, scale, velocity, spin, duration, ground, colo
 
 function spawnDeathChunks(enemy, headshot = false) {
   enemy.group.updateMatrixWorld(true);
-  const isBoss = enemy.type === 'guardian' || enemy.type === 'artist' || enemy.type === 'proofreader';
+  const isBoss = enemy.type === 'guardian' || enemy.type === 'artist' || enemy.type === 'proofreader' || enemy.type === 'redactor';
   const basePerPart = isBoss ? 5 : (headshot ? 4 : 3);
   const chunksPerPart = Math.max(1, Math.round(basePerPart * quality.chunkScale));
   const center = enemy.group.position.clone().add(new THREE.Vector3(0, 1.05, 0));
@@ -2315,14 +2832,14 @@ const deathScribbles = [];
 function spawnDeathScribbles(enemy, headshot = false) {
   const group = new THREE.Group();
   group.position.copy(enemy.group.position).add(new THREE.Vector3(0, 1.05, 0));
-  const baseLineCount = (enemy.type === 'guardian' || enemy.type === 'artist' || enemy.type === 'proofreader') ? 58 : (headshot ? 28 : 21);
+  const baseLineCount = (enemy.type === 'guardian' || enemy.type === 'artist' || enemy.type === 'proofreader' || enemy.type === 'redactor') ? 58 : (headshot ? 28 : 21);
   const lineCount = Math.max(8, Math.round(baseLineCount * quality.fxScale));
 
   for (let i = 0; i < lineCount; i++) {
     const points = [];
     let cursor = new THREE.Vector3(
-      (Math.random() - .5) * ((enemy.type === 'guardian' || enemy.type === 'artist' || enemy.type === 'proofreader') ? 1.8 : .75),
-      (Math.random() - .5) * ((enemy.type === 'guardian' || enemy.type === 'artist' || enemy.type === 'proofreader') ? 2.6 : 1.65),
+      (Math.random() - .5) * ((enemy.type === 'guardian' || enemy.type === 'artist' || enemy.type === 'proofreader' || enemy.type === 'redactor') ? 1.8 : .75),
+      (Math.random() - .5) * ((enemy.type === 'guardian' || enemy.type === 'artist' || enemy.type === 'proofreader' || enemy.type === 'redactor') ? 2.6 : 1.65),
       (Math.random() - .5) * .7
     );
     points.push(cursor.clone());
@@ -2345,7 +2862,7 @@ function spawnDeathScribbles(enemy, headshot = false) {
   deathScribbles.push({
     group,
     born: performance.now(),
-    duration: (enemy.type === 'guardian' || enemy.type === 'artist' || enemy.type === 'proofreader') ? 1650 : (headshot ? 950 : 820),
+    duration: (enemy.type === 'guardian' || enemy.type === 'artist' || enemy.type === 'proofreader' || enemy.type === 'redactor') ? 1650 : (headshot ? 950 : 820),
     drift: new THREE.Vector3((Math.random()-.5)*.45, -.22, (Math.random()-.5)*.45),
     spin: (Math.random()-.5)*1.2
   });
@@ -2489,7 +3006,7 @@ function damageEnemy(enemy, amount, part, hitPoint, shotDirection) {
   const push = shotDirection.clone();
   push.y = 0;
   if (push.lengthSq() > 0) push.normalize();
-  const mass = enemy.type === 'heavy' || enemy.type === 'guardian' || enemy.type === 'artist' || enemy.type === 'proofreader' ? .36 : 1;
+  const mass = enemy.type === 'heavy' || enemy.type === 'guardian' || enemy.type === 'artist' || enemy.type === 'proofreader' || enemy.type === 'redactor' ? .36 : 1;
   enemy.knockbackVelocity.addScaledVector(push, (headshot ? 4.2 : 2.6) * mass);
 
   if (headshot) {
@@ -2530,7 +3047,7 @@ function moveEnemyToward(enemy, target, dt, speed) {
   dir.y = 0;
   if (dir.lengthSq() < .02) return;
   dir.normalize();
-  const radius = enemy.type === 'guardian' || enemy.type === 'artist' || enemy.type === 'proofreader' ? .58 : .34;
+  const radius = enemy.type === 'guardian' || enemy.type === 'artist' || enemy.type === 'proofreader' || enemy.type === 'redactor' ? .58 : .34;
   const nx = enemy.navPosition.x + dir.x * speed * dt;
   const nz = enemy.navPosition.z + dir.z * speed * dt;
   let moved = false;
@@ -2895,11 +3412,18 @@ function updateRoundHud() {
   if (gameMode === 'story') {
     const chapterOne = selectedStoryChapter === 1;
     const chapterTwo = selectedStoryChapter === 2;
-    mapNameEl.textContent = chapterTwo ? 'CORRECTION ARCHIVE' : (chapterOne ? 'WRONG PAGE' : 'MARGIN DISTRICT');
+    const chapterThree = selectedStoryChapter === 3;
+    mapNameEl.textContent = chapterThree ? 'THE DRAFTWORKS' : (chapterTwo ? 'CORRECTION ARCHIVE' : (chapterOne ? 'WRONG PAGE' : 'MARGIN DISTRICT'));
     pageLabelEl.textContent = 'CHAPTER';
-    pageCountEl.textContent = chapterTwo ? 'TWO' : (chapterOne ? 'ONE' : 'ZERO');
+    pageCountEl.textContent = chapterThree ? 'THREE' : (chapterTwo ? 'TWO' : (chapterOne ? 'ONE' : 'ZERO'));
     roundLabelEl.textContent = 'SECTION';
-    if (chapterTwo) {
+    if (chapterThree) {
+      const labels = { waking:'ARRIVAL', workshopApproach:'WORKSHOP', anchorOne:'ANCHOR I', anchorTwo:'ANCHOR II', anchorThree:'ANCHOR III', eraserRun:'ERASER STORM', foundry:'FOUNDRY', redactor:'THE REDACTOR', endingDialogue:'SOURCE GATE', complete:'COMPLETE' };
+      roundCountEl.textContent = labels[storyState] || 'THE DRAFTWORKS';
+      const inCombat = ['anchorOne','anchorTwo','anchorThree','eraserRun','redactor'].includes(storyState) && roundState === 'active';
+      targetLabelEl.textContent = storyState === 'redactor' ? 'REDACTOR' : (inCombat ? 'CONTACTS' : 'SIGNAL');
+      targetCountEl.textContent = inCombat ? `${storyKills} / ${storyKillsRequired}` : '---';
+    } else if (chapterTwo) {
       const labels = {
         waking:'INTAKE', archiveApproach:'INTAKE YARD', archivePatrol:'PATROL', archiveTerminal:'ARCHIVE', defenseApproach:'INK PRESS', defense:'HOLD', corridorRun:'CORRECTION RUN', proofreader:'PROOFREADER', endingDialogue:'EXIT', complete:'COMPLETE'
       };
@@ -3051,10 +3575,11 @@ function resetRunToBoot() {
   storySetpieceStage = 0;
   storyChoiceResolved = false;
   storyFlags = { trustedMara:false, ignoredMara:false, relayTouched:false, answeredUnknown:false };
-  storyCheckpoint.copy(selectedStoryChapter === 2 ? STORY_TWO_SPAWN : (selectedStoryChapter === 1 ? STORY_ONE_SPAWN : STORY_SPAWN));
+  storyCheckpoint.copy(selectedStoryChapter === 3 ? STORY_THREE_SPAWN : (selectedStoryChapter === 2 ? STORY_TWO_SPAWN : (selectedStoryChapter === 1 ? STORY_ONE_SPAWN : STORY_SPAWN)));
   storyDefenseEndsAt = 0;
   storyDefenseWave = 0;
   storyRunAmbushSpawned = false;
+  storyThreeAnchorIndex = 0; storyThreeStormTriggered = false; storyThreeBossPhase = 0;
   storyWakeOverlayEl.classList.remove('visible', 'opening');
   storyDialogueScreenEl.classList.remove('visible');
   document.body.classList.remove('story-dialogue-open');
@@ -3072,11 +3597,12 @@ function resetRunToBoot() {
   roundWarmupUntil = 0;
   roundBannerHideAt = 0;
 
-  if (gameMode === 'story') camera.position.copy(selectedStoryChapter === 2 ? STORY_TWO_SPAWN : (selectedStoryChapter === 1 ? STORY_ONE_SPAWN : STORY_SPAWN));
+  if (gameMode === 'story') camera.position.copy(selectedStoryChapter === 3 ? STORY_THREE_SPAWN : (selectedStoryChapter === 2 ? STORY_TWO_SPAWN : (selectedStoryChapter === 1 ? STORY_ONE_SPAWN : STORY_SPAWN)));
   else camera.position.set(0, STAND_EYE_HEIGHT, 16);
   camera.fov = userBaseFov;
   camera.updateProjectionMatrix();
   velocity.set(0, 0, 0);
+  lastSafePlayerXZ.set(camera.position.x,camera.position.z);
   verticalOffset = 0;
   currentEyeHeight = STAND_EYE_HEIGHT;
   crouching = false;
@@ -3310,10 +3836,10 @@ storyDialogueContinueEl?.addEventListener('pointerup', (event) => {
 function storySpawnIsSafe(point, radius = .62) {
   if (!point || point.length < 2) return false;
   const [x,z]=point;
-  const cx=selectedStoryChapter===2?STORY_TWO_X:(selectedStoryChapter===1?STORY_ONE_X:STORY_X);
-  const cz=selectedStoryChapter===2?STORY_TWO_Z:(selectedStoryChapter===1?STORY_ONE_Z:STORY_Z);
-  const sx=selectedStoryChapter===2?STORY_TWO_SIZE_X:(selectedStoryChapter===1?STORY_ONE_SIZE_X:STORY_SIZE_X);
-  const sz=selectedStoryChapter===2?STORY_TWO_SIZE_Z:(selectedStoryChapter===1?STORY_ONE_SIZE_Z:STORY_SIZE_Z);
+  const cx=selectedStoryChapter===3?STORY_THREE_X:(selectedStoryChapter===2?STORY_TWO_X:(selectedStoryChapter===1?STORY_ONE_X:STORY_X));
+  const cz=selectedStoryChapter===3?STORY_THREE_Z:(selectedStoryChapter===2?STORY_TWO_Z:(selectedStoryChapter===1?STORY_ONE_Z:STORY_Z));
+  const sx=selectedStoryChapter===3?STORY_THREE_SIZE_X:(selectedStoryChapter===2?STORY_TWO_SIZE_X:(selectedStoryChapter===1?STORY_ONE_SIZE_X:STORY_SIZE_X));
+  const sz=selectedStoryChapter===3?STORY_THREE_SIZE_Z:(selectedStoryChapter===2?STORY_TWO_SIZE_Z:(selectedStoryChapter===1?STORY_ONE_SIZE_Z:STORY_SIZE_Z));
   const hx=sx/2-1.4, hz=sz/2-1.4;
   if(x<cx-hx||x>cx+hx||z<cz-hz||z>cz+hz) return false;
   return enemyCanMoveAt(x,z,radius);
@@ -3332,7 +3858,7 @@ function findSafeStorySpawn(preferred, occupied = []) {
   }
 
   // Hand-authored fallback positions in the open central street.
-  const storyCx = selectedStoryChapter === 2 ? STORY_TWO_X : (selectedStoryChapter === 1 ? STORY_ONE_X : STORY_X);
+  const storyCx = selectedStoryChapter === 3 ? STORY_THREE_X : (selectedStoryChapter === 2 ? STORY_TWO_X : (selectedStoryChapter === 1 ? STORY_ONE_X : STORY_X));
   candidates.push(
     [storyCx - 4.5, -13.8], [storyCx + 3.8, -14.4],
     [storyCx - 1.8, -19.6], [storyCx + 3.0, -21.0],
@@ -3345,7 +3871,7 @@ function findSafeStorySpawn(preferred, occupied = []) {
     // Don't place an enemy directly on top of the player during a scripted ambush.
     if (Math.hypot(camera.position.x - candidate[0], camera.position.z - candidate[1]) < 4.0) return false;
     return true;
-  }) || [(selectedStoryChapter === 2 ? STORY_TWO_X : (selectedStoryChapter === 1 ? STORY_ONE_X : STORY_X)), -18 - occupied.length * 2.5];
+  }) || [(selectedStoryChapter === 3 ? STORY_THREE_X : (selectedStoryChapter === 2 ? STORY_TWO_X : (selectedStoryChapter === 1 ? STORY_ONE_X : STORY_X))), -18 - occupied.length * 2.5];
 }
 
 function activeStoryContactCount() {
@@ -3855,31 +4381,175 @@ function updateStoryChapterTwo(now,dt) {
       ],()=>{saveStoryProgress(3);storyState='complete';storyCompletionAt=performance.now()+2600;storyObjectiveTextEl.textContent='CHAPTER TWO COMPLETE';showRoundBanner('STORY MODE','CHAPTER TWO COMPLETE','CORRECTIONS // END',2400);updateRoundHud();});
     }
   } else if(storyState==='complete'&&storyCompletionAt&&now>=storyCompletionAt){
+    storyCompletionAt=0;
+    continueIntoStoryChapter(3);
+  }
+}
+
+
+function drawDraftAnchorResponse(index) {
+  const a=STORY_THREE_ANCHORS[index];
+  dynamicDrawStartedAt=performance.now();
+  // Each anchor literally restores a navigational line into the workshop.
+  for(let i=0;i<3;i++) dynamicBox({
+    x:a.x+(i-1)*2.8, y:.34, z:a.z-3.2-i*1.8,
+    w:2.5,h:.68,d:1.2,shade:(i+index)%2===0
+  });
+  playMapDrawSound();
+}
+
+function startStoryChapterThree() {
+  enemies.forEach(deactivateEnemy);
+  clearDynamicStructures();
+  bossHudEl.classList.remove('visible');
+  roundBannerEl.classList.remove('visible');
+  storyState='waking'; storyStage=0; storyKills=0; storyKillsRequired=0; storyCompletionAt=0; roundState='story';
+  storyThreeAnchorIndex=0; storyThreeStormTriggered=false; storyThreeBossPhase=0;
+  camera.position.copy(STORY_THREE_SPAWN); storyCheckpoint.copy(STORY_THREE_SPAWN);
+  lastSafePlayerXZ.set(camera.position.x,camera.position.z);
+  verticalOffset=0; currentEyeHeight=STAND_EYE_HEIGHT; velocity.set(0,0,0); playerHealth=playerMaxHealth; stamina=100;
+  playerInvulnerableUntil=performance.now()+4200; setStoryMarker(STORY_THREE_BENCH,false); storyHudEl.classList.add('visible'); storyObjectiveTextEl.textContent='WAKE UP';
+  storyWakeStartedAt=performance.now(); storyWakeOpening=false; storyInputLocked=true; controls.pointerSpeed=0;
+  storyWakeOverlayEl.querySelector('.wake-note span').textContent='CHAPTER THREE';
+  storyWakeOverlayEl.querySelector('.wake-note b').textContent='THE DRAFTWORKS';
+  storyWakeOverlayEl.querySelector('.wake-note small').textContent='SOURCE LAYER // PARTIAL MATCH...';
+  storyWakeOverlayEl.classList.remove('opening'); storyWakeOverlayEl.classList.add('visible');
+  updateHealthHud(); updateRoundHud();
+}
+
+function updateStoryChapterThree(now,dt){
+  if(gameMode!=='story'||selectedStoryChapter!==3||!controlSessionActive()||storyState==='boot') return;
+  if(storyMarker?.visible){storyMarker.rotation.y+=dt*.72;const pulse=1+Math.sin(now*.004)*.06;storyMarker.scale.set(pulse,1,pulse);}
+
+  if(storyState==='waking'){
+    const elapsed=now-storyWakeStartedAt;
+    if(!storyWakeOpening&&elapsed>520){storyWakeOpening=true;storyWakeOverlayEl.classList.add('opening');playNoiseBurst(.012,.42,1350);}
+    if(elapsed>2800){
+      storyState='introDialogue';storyWakeOverlayEl.classList.remove('visible','opening');
+      showStoryDialogueSequence([
+        {kicker:'CHAPTER THREE // THE DRAFTWORKS',speaker:'MARA',text:'Workshop confirmed. Nothing here is finished because this is where finished things are repaired.'},
+        {speaker:'UNKNOWN',text:'Not repaired. Remembered.'},
+        {speaker:'YOU',text:'Where is the Artist?'},
+        {speaker:'MARA',text:'I can see its strokes everywhere, but no body. Start with the repair bench. The Archive said this page touched the source layer.'}
+      ],()=>{storyState='workshopApproach';storyObjectiveTextEl.textContent='REACH THE REPAIR BENCH';setStoryMarker(STORY_THREE_BENCH,true);});
+    }
+    return;
+  }
+  if(storyDialogueBlocking) return;
+
+  if(storyState==='workshopApproach'){
+    if(Math.hypot(camera.position.x-STORY_THREE_BENCH.x,camera.position.z-STORY_THREE_BENCH.z)<2.3){
+      setStoryMarker(STORY_THREE_BENCH,false);setStoryCheckpoint(new THREE.Vector3(STORY_THREE_BENCH.x,STAND_EYE_HEIGHT,STORY_THREE_BENCH.z),'REPAIR BENCH');
+      showStoryDialogueSequence([
+        {kicker:'REPAIR BENCH // MEMORY TRACE',speaker:'SYSTEM',text:'SOURCE LAYER ACCESS: 3 ANCHORS REQUIRED. REPAIR ENTITY STATUS: INTERRUPTED.'},
+        {speaker:'MARA',text:'Three anchors. Bring them online and we can see what the Artist was trying to restore.'},
+        {speaker:'UNKNOWN',text:'And what interrupted it.'}
+      ],()=>{storyThreeAnchorIndex=0;storyState='anchorOne';storyObjectiveTextEl.textContent='ACTIVATE LINE ANCHOR 1';setStoryMarker(STORY_THREE_ANCHORS[0],true);});
+    }
+  } else if(['anchorOne','anchorTwo','anchorThree'].includes(storyState)){
+    const idx=storyThreeAnchorIndex, anchor=STORY_THREE_ANCHORS[idx];
+    if(roundState==='story'&&Math.hypot(camera.position.x-anchor.x,camera.position.z-anchor.z)<2.15){
+      setStoryMarker(anchor,false);drawDraftAnchorResponse(idx);
+      const waves=[['corrector','flanker'],['sniper','corrector','rusher'],['heavy','corrector','flanker']];
+      const points=[
+        [[STORY_THREE_X-4,8],[STORY_THREE_X+5,7]],
+        [[STORY_THREE_X+9,-6],[STORY_THREE_X-5,-8],[STORY_THREE_X+2,-12]],
+        [[STORY_THREE_X-8,-21],[STORY_THREE_X+8,-20],[STORY_THREE_X+2,-25]]
+      ];
+      spawnStoryContacts(waves[idx],points[idx]);roundState='active';
+      showRoundBanner('CHAPTER THREE',`LINE ANCHOR ${idx+1} // LIVE`,'THE WORKSHOP IS REMEMBERING YOU',1900);
+    } else if(roundState==='active'&&storyKills>=storyKillsRequired&&activeStoryContactCount()===0){
+      roundState='story';storyThreeAnchorIndex++;
+      if(storyThreeAnchorIndex<3){
+        storyState=['anchorOne','anchorTwo','anchorThree'][storyThreeAnchorIndex];
+        storyObjectiveTextEl.textContent=`ACTIVATE LINE ANCHOR ${storyThreeAnchorIndex+1}`;
+        setStoryMarker(STORY_THREE_ANCHORS[storyThreeAnchorIndex],true);
+        playerHealth=Math.min(playerMaxHealth,playerHealth+22);updateHealthHud();
+      }else{
+        storyState='eraserRun';storyObjectiveTextEl.textContent='REACH THE DRAFT FOUNDRY';setStoryMarker(STORY_THREE_FOUNDRY,true);
+        setStoryCheckpoint(new THREE.Vector3(STORY_THREE_X,STAND_EYE_HEIGHT,-18),'ANCHORS ONLINE');
+        showStoryDialogueSequence([
+          {kicker:'SOURCE TRACE // OPEN',speaker:'SYSTEM',text:'REPAIR ENTITY WAS RECONSTRUCTING BOUNDARY DAMAGE. TERMINATION ORDER ORIGIN: REDACTION PROCESS.'},
+          {speaker:'YOU',text:'So the Artist really was repairing the page.'},
+          {speaker:'MARA',text:'And something killed the repair process. Foundry ahead. Move.'},
+          {speaker:'UNKNOWN',text:'It heard you open the source.'}
+        ],()=>{});
+      }
+    }
+  } else if(storyState==='eraserRun'){
+    if(!storyThreeStormTriggered&&camera.position.z<-20){
+      storyThreeStormTriggered=true;roundState='active';
+      // Redaction slabs draw behind, not on top of the player. Optional flankers keep momentum up.
+      for(let i=0;i<4;i++)dynamicBox({x:STORY_THREE_X+(i%2?8:-8),y:2,z:-12-i*4.2,w:5.5,h:4,d:.55,shade:false});
+      spawnStoryContacts(['rusher','flanker'],[[STORY_THREE_X-10,-27],[STORY_THREE_X+10,-29]]);
+      showCombatMessage('ERASER STORM // KEEP MOVING',900);
+    }
+    if(Math.hypot(camera.position.x-STORY_THREE_FOUNDRY.x,camera.position.z-STORY_THREE_FOUNDRY.z)<2.4){
+      enemies.forEach(e=>{if(e.storyEncounterId===activeStoryEncounterId)deactivateEnemy(e);});
+      roundState='story';setStoryMarker(STORY_THREE_FOUNDRY,false);setStoryCheckpoint(new THREE.Vector3(STORY_THREE_FOUNDRY.x,STAND_EYE_HEIGHT,STORY_THREE_FOUNDRY.z),'DRAFT FOUNDRY');
+      storyState='foundry';
+      showStoryDialogueSequence([
+        {kicker:'DRAFT FOUNDRY // SOURCE WINDOW',speaker:'SYSTEM',text:'REDACTION PROCESS PRESENT. PURPOSE: REMOVE UNSOURCED CHANGES.'},
+        {speaker:'MARA',text:'That includes you.'},
+        {speaker:'UNKNOWN',text:'And her.'},
+        {speaker:'YOU',text:'Then it can explain itself after it stops shooting.'}
+      ],()=>{storyState='redactor';storyObjectiveTextEl.textContent='BREAK THE REDACTOR';spawnStoryContacts(['redactor'],[[STORY_THREE_X,-36]]);roundState='active';showRoundBanner('CHAPTER THREE','THE REDACTOR','SOURCE PURGE // DENIED',2300);});
+    }
+  } else if(storyState==='redactor'){
+    const boss=enemies.find(e=>e.type==='redactor'&&e.alive&&e.activeInRound);
+    if(boss&&storyThreeBossPhase===0&&boss.hp<boss.maxHp*.55){
+      storyThreeBossPhase=1;dynamicDrawStartedAt=now;
+      // Mid-fight layout rewrite: low blocks create new dash/slide lanes without trapping the player.
+      [[-7,-33],[7,-32],[-5,-38],[5,-39]].forEach(([dx,z],i)=>dynamicBox({x:STORY_THREE_X+dx,y:.65,z,w:3.6,h:1.3,d:1.8,shade:i%2===0}));
+      showCombatMessage('REDACTOR // LAYOUT PURGE',900);playMapDrawSound();
+    }
+    if(storyKills>=storyKillsRequired&&activeStoryContactCount()===0){
+      roundState='story';storyState='endingDialogue';setStoryMarker(STORY_THREE_EXIT,true);playerHealth=Math.min(playerMaxHealth,playerHealth+30);updateHealthHud();
+      showStoryDialogueSequence([
+        {kicker:'REDACTOR // BROKEN',speaker:'SYSTEM',text:'SOURCE PURGE FAILED. BORROWED LINE RETAINS EXTERNAL REFERENCE.'},
+        {speaker:'UNKNOWN',text:'There. You finally know why correction cannot erase you.'},
+        {speaker:'MARA',text:'External reference means another page. Maybe another version of you.'},
+        {speaker:'YOU',text:'And the Artist?'},
+        {speaker:'MARA',text:'Interrupted, not destroyed. Its last repair path ends beyond that gate.'}
+      ],()=>{storyObjectiveTextEl.textContent='ENTER THE SOURCE GATE';});
+    }
+  } else if(storyState==='endingDialogue'){
+    if(Math.hypot(camera.position.x-STORY_THREE_EXIT.x,camera.position.z-STORY_THREE_EXIT.z)<2.4){
+      setStoryMarker(STORY_THREE_EXIT,false);playRoundStinger('complete');
+      showStoryDialogueSequence([
+        {kicker:'CHAPTER THREE // SOURCE GATE',speaker:'MARA',text:'Once we cross, we stop following repairs. We start following whoever authored the damage.'},
+        {speaker:'UNKNOWN',text:'Careful. Hands do not like drawings looking back.'},
+        {kicker:'CHAPTER THREE // COMPLETE',speaker:'YOU',text:'Then let us look.'}
+      ],()=>{saveStoryProgress(4);storyState='complete';storyCompletionAt=performance.now()+2800;storyObjectiveTextEl.textContent='CHAPTER THREE COMPLETE';showRoundBanner('STORY MODE','CHAPTER THREE COMPLETE','THE DRAFTWORKS // END',2500);updateRoundHud();});
+    }
+  } else if(storyState==='complete'&&storyCompletionAt&&now>=storyCompletionAt){
     storyCompletionAt=0;gameStarted=false;document.body.classList.add('front-menu');document.body.classList.remove('story-mode');leaveControlSessionForOverlay();showMenuPanel('main',false);
   }
 }
 
 function startStoryMode() {
-  if(selectedStoryChapter===2) startStoryChapterTwo();
+  if(selectedStoryChapter===3) startStoryChapterThree();
+  else if(selectedStoryChapter===2) startStoryChapterTwo();
   else if(selectedStoryChapter===1) startStoryChapterOne();
   else startStoryChapterZero();
 }
 
 function updateStoryMode(now,dt) {
-  if(selectedStoryChapter===2) updateStoryChapterTwo(now,dt);
+  if(selectedStoryChapter===3) updateStoryChapterThree(now,dt);
+  else if(selectedStoryChapter===2) updateStoryChapterTwo(now,dt);
   else if(selectedStoryChapter===1) updateStoryChapterOne(now,dt);
   else updateStoryChapterZero(now,dt);
 }
 
 function combatIsActive() {
-  const storyCombatStates = ['combatOne','combatTwo','bridgeFight','correction','archivePatrol','defense','corridorRun','proofreader'];
+  const storyCombatStates = ['combatOne','combatTwo','bridgeFight','correction','archivePatrol','defense','corridorRun','proofreader','anchorOne','anchorTwo','anchorThree','eraserRun','redactor'];
   return controlSessionActive() && ((gameMode === 'arena' && roundState === 'active') || (gameMode === 'story' && storyCombatStates.includes(storyState) && roundState === 'active'));
 }
 
 function getEnemySquadContext() {
   const active=enemies.filter(e=>e.alive&&!e.dying&&e.activeInRound);
   return {
-    heavy:active.find(e=>e.type==='heavy'||e.type==='guardian'||e.type==='artist'||e.type==='proofreader')||null,
+    heavy:active.find(e=>e.type==='heavy'||e.type==='guardian'||e.type==='artist'||e.type==='proofreader'||e.type==='redactor')||null,
     sniper:active.find(e=>e.type==='sniper')||null,
     rusher:active.find(e=>e.type==='rusher')||null,
     flankers:active.filter(e=>e.type==='flanker')
@@ -4241,6 +4911,11 @@ const DASH_SPEED = 17.0;
 const DASH_DURATION = .16;
 const DASH_COOLDOWN = .88;
 const DASH_STAMINA_COST = 18;
+const CCD_MAX_STEP = 0.11;              // swept-controller substep; smaller than capsule radius
+const CCD_MAX_SUBSTEPS = 28;
+const CAMERA_WALL_CLEARANCE = 0.18;     // emergency first-person camera sphere probe
+const CAMERA_WALL_VERTICAL_PAD = 0.08;
+
 
 const velocity = new THREE.Vector3();
 const wish = new THREE.Vector3();
@@ -4248,6 +4923,7 @@ const forward = new THREE.Vector3();
 const right = new THREE.Vector3();
 const slideDirection = new THREE.Vector3();
 const dashDirection = new THREE.Vector3();
+const lastSafePlayerXZ = new THREE.Vector2(camera.position.x, camera.position.z);
 let grounded = true;
 let stamina = 100;
 let bobPhase = 0;
@@ -4959,23 +5635,117 @@ function collidesAt(x, z, height = currentColliderHeight()) {
 
 function resolvePlayerPenetration() {
   const height = currentColliderHeight();
-  if (canOccupyAt(camera.position.x, camera.position.z, height, verticalOffset)) return false;
-  // Dynamic redraws and edge-case spawn positions can place the capsule inside a
-  // primitive box. Search a tiny ring around the player instead of allowing the
-  // controller to jitter forever against an invisible seam.
-  for (let radius=.12; radius<=1.25; radius+=.12) {
-    for (let i=0;i<12;i++) {
-      const a=i/12*Math.PI*2;
+  if (canOccupyAt(camera.position.x, camera.position.z, height, verticalOffset)) {
+    lastSafePlayerXZ.set(camera.position.x, camera.position.z);
+    return false;
+  }
+
+  // First try the last position known to be legal. This is the safest answer when a
+  // dynamic wall redraws around the player or a high-speed move crossed a seam.
+  if (Math.hypot(camera.position.x-lastSafePlayerXZ.x, camera.position.z-lastSafePlayerXZ.y) < 3.0 &&
+      canOccupyAt(lastSafePlayerXZ.x,lastSafePlayerXZ.y,height,verticalOffset)) {
+    camera.position.x=lastSafePlayerXZ.x;
+    camera.position.z=lastSafePlayerXZ.y;
+    velocity.x*=.25; velocity.z*=.25;
+    return true;
+  }
+
+  // Hard minimum-translation depenetration against primitive AABBs. Expanding each
+  // box by PLAYER_RADIUS is equivalent to sweeping a point against the capsule shell.
+  for(let iteration=0; iteration<6; iteration++){
+    let best=null;
+    for(const box of nearbyColliders(camera.position.x,camera.position.z,PLAYER_RADIUS+1.0)){
+      const headY=verticalOffset+height;
+      if(headY<=box.min.y+.002 || verticalOffset>=box.max.y-.002) continue;
+      const minX=box.min.x-PLAYER_RADIUS, maxX=box.max.x+PLAYER_RADIUS;
+      const minZ=box.min.z-PLAYER_RADIUS, maxZ=box.max.z+PLAYER_RADIUS;
+      const x=camera.position.x, z=camera.position.z;
+      if(x<=minX||x>=maxX||z<=minZ||z>=maxZ) continue;
+      const options=[
+        {x:minX-x-.002,z:0,d:Math.abs(minX-x)}, {x:maxX-x+.002,z:0,d:Math.abs(maxX-x)},
+        {x:0,z:minZ-z-.002,d:Math.abs(minZ-z)}, {x:0,z:maxZ-z+.002,d:Math.abs(maxZ-z)}
+      ];
+      const candidate=options.sort((a,b)=>a.d-b.d)[0];
+      if(!best||candidate.d<best.d) best=candidate;
+    }
+    if(!best) break;
+    camera.position.x+=best.x; camera.position.z+=best.z;
+  }
+
+  if (canOccupyAt(camera.position.x,camera.position.z,height,verticalOffset)) {
+    lastSafePlayerXZ.set(camera.position.x,camera.position.z);
+    velocity.x*=.3; velocity.z*=.3;
+    return true;
+  }
+
+  // Final authored-space recovery for pathological overlaps.
+  for (let radius=.12; radius<=1.8; radius+=.12) {
+    for (let i=0;i<16;i++) {
+      const a=i/16*Math.PI*2;
       const x=camera.position.x+Math.cos(a)*radius;
       const z=camera.position.z+Math.sin(a)*radius;
       if (canOccupyAt(x,z,height,verticalOffset)) {
         camera.position.x=x; camera.position.z=z;
-        velocity.x*=.35; velocity.z*=.35;
+        lastSafePlayerXZ.set(x,z);
+        velocity.x*=.2; velocity.z*=.2;
         return true;
       }
     }
   }
   return false;
+}
+
+function movePlayerSwept(dx, dz, colliderHeight) {
+  const distance=Math.hypot(dx,dz);
+  const steps=Math.min(CCD_MAX_SUBSTEPS,Math.max(1,Math.ceil(distance/CCD_MAX_STEP)));
+  const sx=dx/steps, sz=dz/steps;
+  let blockedX=false, blockedZ=false;
+
+  for(let i=0;i<steps;i++){
+    const tx=camera.position.x+sx;
+    const tz=camera.position.z+sz;
+    if(canOccupyAt(tx,tz,colliderHeight)){
+      camera.position.x=tx; camera.position.z=tz;
+    } else {
+      // Axis separation gives wall sliding while the subdivision prevents tunneling.
+      if(canOccupyAt(tx,camera.position.z,colliderHeight)) camera.position.x=tx;
+      else {
+        const stepY=grounded&&dashTimer<=0?findStepHeightAt(tx,camera.position.z,verticalOffset,colliderHeight):null;
+        if(stepY!==null){verticalOffset=stepY;camera.position.x=tx;grounded=true;}
+        else blockedX=true;
+      }
+      if(canOccupyAt(camera.position.x,tz,colliderHeight)) camera.position.z=tz;
+      else {
+        const stepY=grounded&&dashTimer<=0?findStepHeightAt(camera.position.x,tz,verticalOffset,colliderHeight):null;
+        if(stepY!==null){verticalOffset=stepY;camera.position.z=tz;grounded=true;}
+        else blockedZ=true;
+      }
+    }
+    if(!canOccupyAt(camera.position.x,camera.position.z,colliderHeight,verticalOffset)) resolvePlayerPenetration();
+  }
+  if(canOccupyAt(camera.position.x,camera.position.z,colliderHeight,verticalOffset)) lastSafePlayerXZ.set(camera.position.x,camera.position.z);
+  return {blockedX,blockedZ};
+}
+
+function applyFirstPersonCameraProbe() {
+  // FPS camera == controller origin, so moving a separate camera backward would desync
+  // the crosshair and hitscan. Instead use a small sphere-like probe as a final wall guard.
+  const eyeY=camera.position.y;
+  for(const box of nearbyColliders(camera.position.x,camera.position.z,CAMERA_WALL_CLEARANCE+.4)){
+    if(eyeY<box.min.y-CAMERA_WALL_VERTICAL_PAD||eyeY>box.max.y+CAMERA_WALL_VERTICAL_PAD) continue;
+    const qx=THREE.MathUtils.clamp(camera.position.x,box.min.x,box.max.x);
+    const qz=THREE.MathUtils.clamp(camera.position.z,box.min.z,box.max.z);
+    let dx=camera.position.x-qx, dz=camera.position.z-qz;
+    let dist=Math.hypot(dx,dz);
+    if(dist>=CAMERA_WALL_CLEARANCE) continue;
+    if(dist<1e-5){
+      resolvePlayerPenetration();
+      continue;
+    }
+    const push=CAMERA_WALL_CLEARANCE-dist+.002;
+    camera.position.x+=dx/dist*push;
+    camera.position.z+=dz/dist*push;
+  }
 }
 
 function updateMovement(dt) {
@@ -5060,36 +5830,12 @@ function updateMovement(dt) {
   velocity.y -= GRAVITY * dt;
 
   const colliderHeight = currentColliderHeight();
-  const nextX = camera.position.x + velocity.x * dt;
-  if (!collidesAt(nextX, camera.position.z, colliderHeight)) {
-    camera.position.x = nextX;
-  } else {
-    const stepY = grounded && dashTimer <= 0 ? findStepHeightAt(nextX, camera.position.z, verticalOffset, colliderHeight) : null;
-    if (stepY !== null) {
-      verticalOffset = stepY;
-      camera.position.x = nextX;
-      grounded = true;
-    } else {
-      velocity.x = 0;
-      if (sliding) slideSpeed *= .48;
-      if (dashTimer > 0) dashTimer = 0;
-    }
-  }
-
-  const nextZ = camera.position.z + velocity.z * dt;
-  if (!collidesAt(camera.position.x, nextZ, colliderHeight)) {
-    camera.position.z = nextZ;
-  } else {
-    const stepY = grounded && dashTimer <= 0 ? findStepHeightAt(camera.position.x, nextZ, verticalOffset, colliderHeight) : null;
-    if (stepY !== null) {
-      verticalOffset = stepY;
-      camera.position.z = nextZ;
-      grounded = true;
-    } else {
-      velocity.z = 0;
-      if (sliding) slideSpeed *= .48;
-      if (dashTimer > 0) dashTimer = 0;
-    }
+  const sweepResult = movePlayerSwept(velocity.x * dt, velocity.z * dt, colliderHeight);
+  if (sweepResult.blockedX) velocity.x = 0;
+  if (sweepResult.blockedZ) velocity.z = 0;
+  if (sweepResult.blockedX || sweepResult.blockedZ) {
+    if (sliding) slideSpeed *= .48;
+    if (dashTimer > 0) dashTimer = 0;
   }
 
   const stairSurface = specialWalkableSurfaceHeight(camera.position.x, camera.position.z);
@@ -5143,6 +5889,7 @@ function updateMovement(dt) {
   }
 
   camera.position.y = THREE.MathUtils.damp(camera.position.y, currentEyeHeight + verticalOffset + bobY, 18, dt);
+  applyFirstPersonCameraProbe();
 
   const slideLean = sliding ? .065 : 0;
   const dashLean = dashTimer > 0 ? .085 : 0;
@@ -5256,12 +6003,12 @@ function beginMobileLook(pointerId, clientX, clientY) {
 }
 
 const mobileLookEuler = new THREE.Euler(0, 0, 0, 'YXZ');
-function applyMobileLookDelta(dx, dy) {
+function applyMobileLookDelta(dx, dy, source = 'normal') {
   if (!mobileSessionActive || storyInputLocked || storyDialogueBlocking || upgradeChoosing) return;
   if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
 
-  const sensitivity = Number(sensitivitySetting?.value || .78);
-  const scale = .00305 * (sensitivity / .78);
+  const multiplier = source === 'fire' ? mobileFireSensitivityMultiplier : mobileLookSensitivityMultiplier;
+  const scale = .00305 * multiplier;
 
   // Work from the camera quaternion exactly like PointerLockControls does.
   // This avoids camera.rotation and PointerLockControls maintaining competing
@@ -5341,14 +6088,13 @@ function flashMobileButton(button, latched = false) {
 if (IS_TOUCH_DEVICE) {
   const menuFootnote = document.querySelector('#main-menu-panel .footnote');
   if (menuFootnote) menuFootnote.textContent = 'ARENA: LIVING PAGE · STORY: THE BORROWED LINE · MOBILE TOUCH BUILD';
-  const sensitivityLabel = sensitivitySetting?.closest('.setting-row')?.querySelector('b');
-  if (sensitivityLabel) sensitivityLabel.textContent = 'LOOK SENSITIVITY';
+  sensitivitySetting?.closest('.setting-row')?.classList.add('desktop-only-setting');
   const controlNote = document.querySelector('#controls-menu-panel .menu-note');
-  if (controlNote) controlNote.textContent = 'Mobile: left stick moves. Drag anywhere on the unobstructed game screen to look. FIRE shoots. AIM toggles ADS. RELOAD, JUMP, CROUCH/SLIDE, DASH and WEAPON are separate buttons.';
+  if (controlNote) controlNote.textContent = 'Mobile: left stick moves. Drag the look area to aim. Hold FIRE and drag to keep tracking while shooting. AIM can also be dragged as a trackpad. Sensitivities and the entire HUD layout are customizable in Settings.';
   const controlCells = [...document.querySelectorAll('#controls-menu-panel .instruction-grid > div')];
   const touchHelp = [
-    ['LEFT STICK','move · full up = sprint'], ['GAME SCREEN','drag to look'], ['FIRE','hold to shoot'],
-    ['AIM','toggle ADS'], ['RELOAD','reload weapon'], ['CROUCH','tap crouch · at speed slide'],
+    ['LEFT STICK','move · full up = sprint'], ['LOOK AREA','drag to look'], ['FIRE','hold + drag to shoot/aim'],
+    ['AIM','tap ADS · drag to aim'], ['RELOAD','reload weapon'], ['CROUCH','tap crouch · at speed slide'],
     ['DASH','directional burst'], ['JUMP','jump · slide jump'], ['WEAPON','cycle unlocked guns']
   ];
   controlCells.forEach((cell, i) => {
@@ -5374,6 +6120,7 @@ if (IS_TOUCH_DEVICE) {
   let joystickTouchId = null;
   let lookTouchId = null;
   let fireTouchId = null;
+  let aimTrackTouchId = null;
 
   renderer.domElement.style.touchAction = 'none';
   renderer.domElement.style.webkitUserSelect = 'none';
@@ -5432,12 +6179,20 @@ if (IS_TOUCH_DEVICE) {
   function setFireTouch(touch) {
     if (fireTouchId !== null || !mobileGameplayInputAllowed()) return false;
     fireTouchId = touch.identifier;
-    mobileTouches.set(touch.identifier, { role: 'fire' });
+    mobileTouches.set(touch.identifier, { role: 'fire', x:touch.clientX, y:touch.clientY });
     triggerHeld = true;
     triggerHoldStartedAt = performance.now();
     mobileFireBtn?.classList.add('pressed');
     fireTestShot();
     mobileHaptic(5);
+    return true;
+  }
+
+  function setAimTrackTouch(touch) {
+    if (aimTrackTouchId !== null || !mobileGameplayInputAllowed()) return false;
+    aimTrackTouchId = touch.identifier;
+    mobileTouches.set(touch.identifier, { role:'aimtrack', x:touch.clientX, y:touch.clientY });
+    runActionButton(mobileAimBtn);
     return true;
   }
 
@@ -5502,14 +6257,15 @@ if (IS_TOUCH_DEVICE) {
 
     const action = actionButtonAt(x, y);
     if (action === mobileFireBtn) return setFireTouch(touch);
+    if (action === mobileAimBtn) return setAimTrackTouch(touch);
     if (action) {
       mobileTouches.set(touch.identifier, { role: 'action' });
       return runActionButton(action);
     }
 
-    // Everything else on the live game viewport is camera look. No canvas hit
-    // test and no invisible look layer are involved.
-    if (!isBlockingOverlayAt(x, y)) return setLookTouch(touch);
+    // Look input is constrained by the customizable look region. The default
+    // preset fills the gameplay viewport, so normal two-thumb play remains unchanged.
+    if (!isBlockingOverlayAt(x, y) && pointInsideElement(x, y, mobileLookZoneEl)) return setLookTouch(touch);
     return false;
   }
 
@@ -5522,20 +6278,23 @@ if (IS_TOUCH_DEVICE) {
       return true;
     }
 
-    if (state.role === 'look') {
+    if (state.role === 'look' || state.role === 'fire' || state.role === 'aimtrack') {
       const dx = touch.clientX - state.x;
       const dy = touch.clientY - state.y;
       state.x = touch.clientX;
       state.y = touch.clientY;
-      mobileLookLastX = touch.clientX;
-      mobileLookLastY = touch.clientY;
+      if (state.role === 'look') {
+        mobileLookLastX = touch.clientX;
+        mobileLookLastY = touch.clientY;
+      }
       if (Math.abs(dx) <= innerWidth * .45 && Math.abs(dy) <= innerHeight * .45) {
-        applyMobileLookDelta(dx, dy);
+        if (state.role === 'look') applyMobileLookDelta(dx, dy, 'normal');
+        else if (fireDragAimEnabled) applyMobileLookDelta(dx, dy, state.role === 'fire' ? 'fire' : 'normal');
       }
       return true;
     }
 
-    return state.role === 'fire' || state.role === 'action';
+    return state.role === 'action';
   }
 
   function endTouch(touch) {
@@ -5553,6 +6312,8 @@ if (IS_TOUCH_DEVICE) {
       triggerHeld = false;
       triggerHoldStartedAt = 0;
       mobileFireBtn?.classList.remove('pressed');
+    } else if (state.role === 'aimtrack' && touch.identifier === aimTrackTouchId) {
+      aimTrackTouchId = null;
     }
 
     mobileTouches.delete(touch.identifier);
@@ -5634,6 +6395,7 @@ if (IS_TOUCH_DEVICE) {
     joystickTouchId = null;
     lookTouchId = null;
     fireTouchId = null;
+    aimTrackTouchId = null;
     resetMobileJoystick();
     mobileLookPointer = null;
     triggerHeld = false;
@@ -5664,6 +6426,7 @@ if (IS_TOUCH_DEVICE) {
     joystickTouchId,
     lookTouchId,
     fireTouchId,
+    aimTrackTouchId,
     touchCount: mobileTouches.size,
     moveX: mobileMoveX,
     moveY: mobileMoveY,
@@ -5740,7 +6503,7 @@ function performKnifeAttack(now, w) {
   const hit = hits[0];
   const enemy = hit.object.userData.enemy;
   const part = hit.object.userData.hitPart || 'body';
-  const canCrossout = enemy.hp / Math.max(1, enemy.maxHp) <= .25 && enemy.type !== 'artist';
+  const canCrossout = enemy.hp / Math.max(1, enemy.maxHp) <= .25 && enemy.type !== 'artist' && enemy.type !== 'redactor';
   if (canCrossout) {
     enemy.crossoutExecution = true;
     crossoutSpeedUntil = now + 1800;
@@ -6028,6 +6791,7 @@ function animate(now) {
   updateWeaponAnimation(now, rawDt);
   if (muzzleFlash.visible && now >= muzzleHideAt) muzzleFlash.visible = false;
 
+  horizonHaze.position.x = camera.position.x; horizonHaze.position.z = camera.position.z;
   renderer.render(scene, camera);
 }
 requestAnimationFrame(animate);

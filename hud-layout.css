@@ -1,0 +1,199 @@
+:root {
+  --inkbreak-safe-top: env(safe-area-inset-top, 0px);
+  --inkbreak-safe-right: env(safe-area-inset-right, 0px);
+  --inkbreak-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --inkbreak-safe-left: env(safe-area-inset-left, 0px);
+}
+
+.touch-only-setting { display: none !important; }
+body.touch-device .touch-only-setting { display: grid !important; }
+
+.settings-extra-actions { margin-top: 10px; display: flex; gap: 8px; }
+.hud-layout-settings { display: grid; gap: 9px; margin: 14px 0 18px; }
+.hud-layout-settings .setting-row select { min-width: 190px; }
+.hud-check-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .08em;
+  border-bottom: 1px dashed rgba(23,77,154,.22);
+  padding: 7px 2px;
+}
+.hud-check-row input { accent-color: var(--ink); }
+.hud-layout-actions { margin-top: 6px; }
+
+/* HUD editor lives above the paused game. The real controls become the editor canvas. */
+#hud-editor {
+  position: fixed;
+  inset: 0;
+  z-index: 260;
+  display: none;
+  pointer-events: none;
+  overflow: hidden;
+  background: rgba(242,238,226,.08);
+}
+#hud-editor.visible { display: block; }
+#hud-editor::before,
+#hud-editor::after {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(-8deg, rgba(23,77,154,.055) 0 1px, transparent 1px 6px);
+}
+#hud-editor::before {
+  left: 0;
+  right: 0;
+  top: 0;
+  height: max(10px, var(--inkbreak-safe-top));
+  border-bottom: 1px dashed rgba(23,77,154,.28);
+}
+#hud-editor::after {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: max(10px, var(--inkbreak-safe-bottom));
+  border-top: 1px dashed rgba(23,77,154,.28);
+}
+.hud-editor-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: .28;
+  background-image:
+    linear-gradient(rgba(23,77,154,.11) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(23,77,154,.11) 1px, transparent 1px);
+  background-size: 5vw 5vw;
+}
+body:not(.hud-grid-enabled) .hud-editor-grid { opacity: 0; }
+
+.hud-editor-panel {
+  position: absolute;
+  left: 50%;
+  top: max(10px, calc(var(--inkbreak-safe-top) + 7px));
+  transform: translateX(-50%) rotate(-.25deg);
+  width: min(720px, calc(100vw - 170px));
+  min-height: 82px;
+  padding: 12px 15px 11px;
+  pointer-events: auto;
+  background:
+    linear-gradient(rgba(23,77,154,.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(23,77,154,.06) 1px, transparent 1px),
+    rgba(255,253,245,.96);
+  background-size: 18px 18px;
+  border: 2px solid var(--ink);
+  box-shadow: 7px 8px 0 rgba(23,77,154,.13);
+  color: var(--ink);
+  font-family: "Courier New", ui-monospace, monospace;
+  display: grid;
+  grid-template-columns: minmax(115px, 1fr) minmax(135px, 1.4fr) minmax(135px, 1.4fr) auto;
+  gap: 9px 12px;
+  align-items: end;
+}
+.hud-editor-panel .tape { width: 62px; height: 15px; top: -8px; }
+.hud-editor-head { display:flex; align-items:center; justify-content:space-between; gap:10px; grid-column: 1 / -1; }
+.hud-editor-head div:first-child { display:flex; gap:9px; align-items:baseline; }
+.hud-editor-head small { font-size:8px; letter-spacing:.12em; opacity:.65; }
+.hud-editor-head b { font-size:12px; letter-spacing:.08em; }
+.hud-editor-buttons { display:flex; gap:6px; }
+.hud-editor-buttons button,
+.hud-editor-panel select {
+  border: 1.5px solid var(--ink);
+  color: var(--ink);
+  background: var(--paper-bright);
+  font: 900 9px/1 "Courier New", monospace;
+  padding: 8px 10px;
+}
+.hud-editor-panel label { display:grid; gap:4px; font-size:8px; font-weight:900; letter-spacing:.07em; }
+.hud-editor-panel input[type="range"] { width:100%; accent-color:var(--ink); }
+.hud-editor-panel output { float:right; opacity:.72; }
+.hud-editor-options { display:flex; gap:8px; align-items:center; }
+.hud-editor-options label { display:flex; gap:5px; align-items:center; white-space:nowrap; }
+.hud-editor-tip { grid-column:1/-1; font-size:7px; opacity:.55; letter-spacing:.08em; }
+
+/* During editing show the touch HUD even on desktop for preview. Gameplay routing is paused. */
+body.hud-editing #mobile-controls { display: block !important; opacity: 1 !important; pointer-events: none !important; z-index: 255 !important; }
+body.hud-editing #mobile-controls button,
+body.hud-editing #mobile-joystick,
+body.hud-editing #bottom-left,
+body.hud-editing #mobile-look-zone { pointer-events: auto !important; touch-action: none !important; }
+body.hud-editing #mobile-pause { pointer-events: none !important; opacity: .25 !important; }
+body.hud-editing #mobile-use { display: none !important; }
+body.hud-editing #bottom-left { display: block !important; }
+body.hud-editing #mobile-look-zone {
+  display: block !important;
+  background: rgba(23,77,154,.035) !important;
+  border: 1.5px dashed rgba(23,77,154,.35) !important;
+}
+body.hud-editing #mobile-look-zone .look-hint {
+  opacity: .72 !important;
+  font-size: 9px !important;
+}
+
+/* Once the serializer owns positions, disable legacy cluster transforms. */
+body.hud-layout-applied #mobile-action-cluster,
+body.hud-layout-applied #mobile-left-controls {
+  transform: none !important;
+}
+body.hud-layout-applied #mobile-action-cluster {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  pointer-events: none !important;
+}
+body.hud-layout-applied #mobile-left-controls {
+  position: fixed !important;
+}
+body.hud-layout-applied #mobile-fire,
+body.hud-layout-applied #mobile-aim,
+body.hud-layout-applied #mobile-reload,
+body.hud-layout-applied #mobile-jump,
+body.hud-layout-applied #mobile-crouch,
+body.hud-layout-applied #mobile-dash,
+body.hud-layout-applied #mobile-weapon {
+  position: fixed !important;
+  right: auto !important;
+  bottom: auto !important;
+  transform-origin: center center !important;
+}
+body.hud-layout-applied #mobile-look-zone {
+  position: fixed !important;
+  inset: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  transform-origin: center center !important;
+}
+body.hud-layout-applied #bottom-left {
+  position: fixed !important;
+  right: auto !important;
+  bottom: auto !important;
+  transform-origin: center center !important;
+}
+
+.hud-edit-target { outline: 2px dashed rgba(23,77,154,.32) !important; outline-offset: 4px; cursor: move !important; }
+.hud-edit-target.hud-selected {
+  outline: 3px solid rgba(23,77,154,.86) !important;
+  outline-offset: 6px;
+  filter: drop-shadow(0 0 7px rgba(23,77,154,.18));
+}
+
+@media (max-height: 470px) {
+  .hud-editor-panel {
+    left: 50%;
+    top: 6px;
+    width: min(760px, calc(100vw - 120px));
+    padding: 8px 10px 7px;
+    grid-template-columns: 125px 1fr 1fr auto;
+    gap: 5px 8px;
+  }
+  .hud-editor-head { grid-column: auto; align-self:center; }
+  .hud-editor-head > div:first-child small { display:none; }
+  .hud-editor-tip { display:none; }
+}
+body.touch-device .desktop-only-setting { display: none !important; }
+.touch-toggle-setting { grid-template-columns: 1fr auto !important; }
+.touch-toggle-setting input[type="checkbox"] { width: 22px; height: 22px; accent-color: var(--ink); }
+body.hud-editing #bottom-left { z-index: 256 !important; }

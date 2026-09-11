@@ -195,6 +195,9 @@
           <button class="chapter-card locked" data-chapter="2" id="chapter-two-card">
             <span>CHAPTER TWO</span><b>CORRECTIONS</b><small>Enter the archive that decides what is allowed to exist.</small>
           </button>
+          <button class="chapter-card locked" data-chapter="3" id="chapter-three-card">
+            <span>CHAPTER THREE</span><b>THE DRAFTWORKS</b><small>Follow the Artist's repair trail into the workshop beneath the pages.</small>
+          </button>
         </div>
         <p class="menu-note" id="chapter-progress-note">Complete chapters to unlock the next page.</p>
         <button class="menu-secondary menu-back" data-open-panel="main">← BACK</button>
@@ -230,6 +233,18 @@
             <span><b>MOUSE SENSITIVITY</b><small id="sensitivity-value">0.78</small></span>
             <input id="sensitivity-setting" type="range" min="0.35" max="1.35" step="0.01" value="0.78" />
           </label>
+          <label class="setting-row touch-only-setting">
+            <span><b>MOBILE CAMERA LOOK</b><small id="mobile-look-sensitivity-value">1.00×</small></span>
+            <input id="mobile-look-sensitivity-setting" type="range" min="0.40" max="2.00" step="0.05" value="1.00" />
+          </label>
+          <label class="setting-row touch-only-setting">
+            <span><b>FIRING / FIRE-DRAG LOOK</b><small id="mobile-fire-sensitivity-value">0.82×</small></span>
+            <input id="mobile-fire-sensitivity-setting" type="range" min="0.35" max="1.60" step="0.05" value="0.82" />
+          </label>
+          <label class="setting-row touch-only-setting touch-toggle-setting">
+            <span><b>FIRE / ADS DRAG AIM</b><small id="fire-drag-aim-value">ON</small></span>
+            <input id="fire-drag-aim-setting" type="checkbox" checked />
+          </label>
           <label class="setting-row">
             <span><b>FIELD OF VIEW</b><small id="fov-value">72°</small></span>
             <input id="fov-setting" type="range" min="60" max="90" step="1" value="72" />
@@ -248,8 +263,38 @@
             </select>
           </label>
         </div>
+        <div class="settings-extra-actions">
+          <button class="menu-secondary" id="open-hud-layout-btn">HUD LAYOUT</button>
+        </div>
         <p class="menu-note">Settings apply immediately. AUTO dynamically scales resolution and sketch detail toward 60 FPS.</p>
         <button class="menu-secondary menu-back" data-open-panel="main">← BACK</button>
+      </section>
+
+      <section class="sheet menu-panel" id="hud-layout-menu-panel" data-panel="hud-layout">
+        <div class="tape tape-a"></div>
+        <div class="tape tape-b"></div>
+        <p class="eyebrow">TOUCH CONTROL // HUD LAYOUT</p>
+        <h2>DRAW YOUR CONTROLS</h2>
+        <div class="hud-layout-settings">
+          <label class="setting-row">
+            <span><b>LAYOUT PRESET</b><small>DEVICE SAFE</small></span>
+            <select id="hud-preset-select">
+              <option value="thumb2">2-FINGER THUMB</option>
+              <option value="three">3-FINGER</option>
+              <option value="four">4-FINGER CLAW</option>
+              <option value="custom">CUSTOM / SAVED</option>
+            </select>
+          </label>
+          <label class="hud-check-row"><input id="hud-grid-snap" type="checkbox" checked /><span>SNAP TO GRID</span></label>
+          <label class="hud-check-row"><input id="hud-edge-snap" type="checkbox" checked /><span>SNAP TO SAFE EDGES</span></label>
+        </div>
+        <div class="menu-actions hud-layout-actions">
+          <button class="menu-primary" id="customize-hud-btn">CUSTOMIZE HUD</button>
+          <button class="menu-secondary" id="save-hud-layout-btn">SAVE LAYOUT</button>
+          <button class="menu-secondary" id="reset-hud-layout-btn">RESET TO DEFAULT</button>
+          <button class="menu-secondary" id="hud-layout-back-btn">← SETTINGS</button>
+        </div>
+        <p class="menu-note">Drag controls directly on screen. Select any element to tune scale and opacity. Layout is stored locally on this device.</p>
       </section>
 
       <section class="sheet menu-panel" id="pause-menu-panel" data-panel="pause">
@@ -295,6 +340,46 @@
     </section>
   </div>
 
+  <div id="hud-editor" aria-hidden="true">
+    <div class="hud-editor-grid" aria-hidden="true"></div>
+    <section class="hud-editor-panel">
+      <div class="tape tape-a"></div>
+      <div class="tape tape-b"></div>
+      <div class="hud-editor-head">
+        <div><small>HUD EDITOR</small><b id="hud-selected-label">FIRE</b></div>
+        <div class="hud-editor-buttons">
+          <button id="hud-editor-save">SAVE</button>
+          <button id="hud-editor-done">DONE</button>
+        </div>
+      </div>
+      <label>ELEMENT
+        <select id="hud-element-select">
+          <option value="joystick">MOVEMENT JOYSTICK</option>
+          <option value="look">AIM / LOOK AREA</option>
+          <option value="fire">FIRE</option>
+          <option value="aim">ADS / AIM</option>
+          <option value="reload">RELOAD</option>
+          <option value="jump">JUMP</option>
+          <option value="crouch">CROUCH / SLIDE</option>
+          <option value="dash">DASH</option>
+          <option value="weapon">WEAPON SLOT</option>
+          <option value="status">HEALTH / STAMINA</option>
+        </select>
+      </label>
+      <label>SCALE <output id="hud-scale-value">100%</output>
+        <input id="hud-scale-slider" type="range" min="50" max="200" step="5" value="100" />
+      </label>
+      <label>OPACITY <output id="hud-opacity-value">100%</output>
+        <input id="hud-opacity-slider" type="range" min="20" max="100" step="5" value="100" />
+      </label>
+      <div class="hud-editor-options">
+        <label><input id="hud-editor-grid-snap" type="checkbox" checked /> GRID</label>
+        <label><input id="hud-editor-edge-snap" type="checkbox" checked /> SAFE EDGE</label>
+      </div>
+      <small class="hud-editor-tip">DRAG THE SELECTED CONTROL · SAFE AREAS ARE SHADED</small>
+    </section>
+  </div>
+
   <div id="mobile-controls" aria-label="mobile game controls">
     <button id="mobile-pause" class="mobile-utility" aria-label="Pause">II</button>
 
@@ -324,7 +409,8 @@
     </div>
   </div>
 
-  <link rel="stylesheet" href="./mobile-input.css?v=20260910-mobile-input-v6" />
-  <script type="module" src="./main.js?v=20260910-mobile-input-v6"></script>
+  <link rel="stylesheet" href="./mobile-input.css?v=20260911-hud-v1" />
+  <link rel="stylesheet" href="./hud-layout.css?v=20260911-hud-v1" />
+  <script type="module" src="./main.js?v=20260911-hud-v1"></script>
 </body>
 </html>
