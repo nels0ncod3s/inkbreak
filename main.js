@@ -168,6 +168,9 @@ function activateControlSession() {
   // cancel the first joystick touch on iOS/Android.
   clearMobileInputs();
   mobileSessionActive = true;
+  qualityWarmupUntil = performance.now() + 5000;
+  autoBadWindows = 0;
+  autoGoodWindows = 0;
   document.body.classList.add('mobile-playing');
   document.body.classList.remove('front-menu');
   menu.classList.remove('visible');
@@ -205,6 +208,9 @@ function resumeControlSessionAfterOverlay() {
 // ---------- Adaptive performance / quality manager ----------
 const graphicsSetting = document.querySelector('#graphics-setting');
 const graphicsValue = document.querySelector('#graphics-value');
+const graphicsDescription = document.querySelector('#graphics-description');
+const renderScaleSetting = document.querySelector('#render-scale-setting');
+const renderScaleValue = document.querySelector('#render-scale-value');
 const DEVICE_MEMORY_GB = Number(navigator.deviceMemory || 4);
 const CPU_THREADS = Number(navigator.hardwareConcurrency || 4);
 const DEVICE_TIER = (() => {
@@ -218,13 +224,30 @@ const DEVICE_TIER = (() => {
 })();
 
 const QUALITY_PRESETS = {
-  performance: { pixelCap: IS_TOUCH_DEVICE ? .90 : 1.10, ghostDistance: 16, hatchDistance: 12, ghostPasses:1, fxScale: .45, chunkScale: .45, cullDistance: 82 },
-  balanced:    { pixelCap: IS_TOUCH_DEVICE ? 1.10 : 1.40, ghostDistance: 28, hatchDistance: 20, ghostPasses:2, fxScale: .72, chunkScale: .72, cullDistance: 112 },
-  quality:     { pixelCap: IS_TOUCH_DEVICE ? 1.28 : 1.75, ghostDistance: 44, hatchDistance: 34, ghostPasses:3, fxScale: 1.00, chunkScale: 1.00, cullDistance: 150 }
+  // Pixel caps are CSS-pixel density multipliers, not raw device DPR. The old
+  // mobile caps (1.10 / 1.28) were the main source of the permanently blurry
+  // image on Retina-class phones, and manual QUALITY was still being degraded by
+  // the adaptive manager. Manual modes are now locked; AUTO alone may scale.
+  performance: { pixelCap: IS_TOUCH_DEVICE ? 1.00 : 1.15, pixelFloor: IS_TOUCH_DEVICE ? .90 : 1.00, ghostDistance: 16, hatchDistance: 12, ghostPasses:1, fxScale: .45, chunkScale: .45, cullDistance: 82 },
+  balanced:    { pixelCap: IS_TOUCH_DEVICE ? 1.50 : 1.60, pixelFloor: IS_TOUCH_DEVICE ? 1.10 : 1.15, ghostDistance: 30, hatchDistance: 22, ghostPasses:2, fxScale: .74, chunkScale: .74, cullDistance: 116 },
+  quality:     { pixelCap: 2.00, pixelFloor: IS_TOUCH_DEVICE ? 1.35 : 1.50, ghostDistance: 46, hatchDistance: 36, ghostPasses:3, fxScale: 1.00, chunkScale: 1.00, cullDistance: 154 }
+};
+const GRAPHICS_DESCRIPTIONS = {
+  auto: 'Dynamically adjusts 3D resolution toward 60 FPS. HUD stays native-resolution.',
+  performance: 'Lower 3D resolution and reduced sketch detail. Best for older phones.',
+  balanced: 'Sharper image with stable sketch detail. Recommended for most devices.',
+  quality: 'Highest render resolution and sketch detail. No automatic resolution downgrade.'
 };
 let graphicsMode = (() => { try { return localStorage.getItem('inkbreak_graphics') || 'auto'; } catch { return 'auto'; } })();
 if (!['auto','performance','balanced','quality'].includes(graphicsMode)) graphicsMode = 'auto';
-let autoQualityLevel = DEVICE_TIER === 'low' ? 'performance' : DEVICE_TIER === 'high' ? 'quality' : 'balanced';
+let manualRenderScale = (() => {
+  try { return THREE.MathUtils.clamp(Number(localStorage.getItem('inkbreak_render_scale') || 2.0), .75, 2.0); }
+  catch { return 2.0; }
+})();
+// AUTO starts sharp. Even low-tier devices begin at BALANCED and are allowed a
+// warm-up period before resolution can fall. Sustained bad frame pacing, not a
+// single loading spike, is required to reduce clarity.
+let autoQualityLevel = DEVICE_TIER === 'high' ? 'quality' : 'balanced';
 let activeQualityLevel = graphicsMode === 'auto' ? autoQualityLevel : graphicsMode;
 let quality = QUALITY_PRESETS[activeQualityLevel];
 let dynamicPixelCap = quality.pixelCap;
@@ -234,24 +257,35 @@ let perfWindowFrames = 0;
 let perfWindowLongFrames = 0;
 let lastPerfAdjustAt = performance.now();
 let lastLodUpdateAt = 0;
-
-function chooseAutoQualityFromFrameTime() {
-  if (graphicsMode !== 'auto') return;
-  if (frameEmaMs > 21.5 || longFrameRatio > .20) autoQualityLevel = 'performance';
-  else if (DEVICE_TIER === 'low') autoQualityLevel = frameEmaMs < 15.2 && longFrameRatio < .03 ? 'balanced' : 'performance';
-  else if (frameEmaMs < 16.1 && longFrameRatio < .05) autoQualityLevel = DEVICE_TIER === 'high' ? 'quality' : 'balanced';
-  else autoQualityLevel = 'balanced';
-  activeQualityLevel = autoQualityLevel;
-  quality = QUALITY_PRESETS[activeQualityLevel];
-}
+let autoBadWindows = 0;
+let autoGoodWindows = 0;
+let qualityWarmupUntil = performance.now() + 5000;
+const AUTO_ADJUST_INTERVAL_MS = 3000;
 
 function desiredPixelRatio() {
-  return Math.max(.65, Math.min(devicePixelRatio || 1, dynamicPixelCap));
+  const deviceDpr = Math.max(1, window.devicePixelRatio || 1);
+  const cap = graphicsMode === 'auto'
+    ? dynamicPixelCap
+    : Math.min(quality.pixelCap, manualRenderScale);
+  return THREE.MathUtils.clamp(Math.min(deviceDpr, cap), .75, 2.0);
+}
+
+function syncRenderScaleUi() {
+  if (!renderScaleSetting || !renderScaleValue) return;
+  const isAuto = graphicsMode === 'auto';
+  renderScaleSetting.disabled = isAuto;
+  renderScaleSetting.value = String(Math.round(manualRenderScale * 100));
+  renderScaleValue.textContent = isAuto ? 'AUTO' : `${Math.round(Math.min(quality.pixelCap, manualRenderScale) * 100)}%`;
 }
 
 function updateGraphicsLabel() {
-  if (!graphicsValue) return;
-  graphicsValue.textContent = graphicsMode === 'auto' ? `AUTO // ${activeQualityLevel.toUpperCase()}` : graphicsMode.toUpperCase();
+  if (graphicsValue) {
+    graphicsValue.textContent = graphicsMode === 'auto'
+      ? `AUTO // ${activeQualityLevel.toUpperCase()} ${dynamicPixelCap.toFixed(2)}×`
+      : `${graphicsMode.toUpperCase()} // ${desiredPixelRatio().toFixed(2)}×`;
+  }
+  if (graphicsDescription) graphicsDescription.textContent = GRAPHICS_DESCRIPTIONS[graphicsMode] || GRAPHICS_DESCRIPTIONS.auto;
+  syncRenderScaleUi();
 }
 
 const scene = new THREE.Scene();
@@ -324,13 +358,13 @@ horizonHaze.frustumCulled = false;
 scene.add(horizonHaze);
 
 const renderer = new THREE.WebGLRenderer({
-  antialias: !IS_TOUCH_DEVICE || DEVICE_TIER === 'high',
+  antialias: !IS_TOUCH_DEVICE || DEVICE_TIER !== 'low',
   powerPreference: 'high-performance',
   alpha: false,
   stencil: false
 });
 renderer.setPixelRatio(desiredPixelRatio());
-renderer.setSize(innerWidth, innerHeight);
+renderer.setSize(innerWidth, innerHeight, false);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.shadowMap.enabled = false; // Unlit paper style: keep mobile GPU/thermal cost predictable.
 renderer.sortObjects = true;
@@ -469,19 +503,32 @@ if (graphicsSetting) {
     graphicsMode = graphicsSetting.value;
     try { localStorage.setItem('inkbreak_graphics', graphicsMode); } catch {}
     if (graphicsMode === 'auto') {
-      autoQualityLevel = DEVICE_TIER === 'low' ? 'performance' : DEVICE_TIER === 'high' ? 'quality' : 'balanced';
+      autoQualityLevel = DEVICE_TIER === 'high' ? 'quality' : 'balanced';
       activeQualityLevel = autoQualityLevel;
+      qualityWarmupUntil = performance.now() + 5000;
+      autoBadWindows = 0; autoGoodWindows = 0;
     } else {
       activeQualityLevel = graphicsMode;
     }
     quality = QUALITY_PRESETS[activeQualityLevel];
-    dynamicPixelCap = quality.pixelCap;
+    dynamicPixelCap = graphicsMode === 'auto' ? quality.pixelCap : Math.min(quality.pixelCap, manualRenderScale);
     renderer.setPixelRatio(desiredPixelRatio());
     renderer.setSize(innerWidth, innerHeight, false);
     updateGraphicsLabel();
   });
   updateGraphicsLabel();
 }
+
+renderScaleSetting?.addEventListener('input', () => {
+  manualRenderScale = THREE.MathUtils.clamp(Number(renderScaleSetting.value) / 100, .75, 2.0);
+  try { localStorage.setItem('inkbreak_render_scale', String(manualRenderScale)); } catch {}
+  if (graphicsMode !== 'auto') {
+    renderer.setPixelRatio(desiredPixelRatio());
+    renderer.setSize(innerWidth, innerHeight, false);
+  }
+  updateGraphicsLabel();
+});
+syncRenderScaleUi();
 
 
 // ---------- Mobile HUD layout system ----------
@@ -569,7 +616,7 @@ function hudClampPoint(id, x, y, scale, useEdgeSnap = true) {
   const safeL = getSafeInsetPx('left') + 7;
   const safeR = getSafeInsetPx('right') + 7;
   const safeT = getSafeInsetPx('top') + 7;
-  const safeB = getSafeInsetPx('bottom') + 7;
+  const safeB = getSafeInsetPx('bottom') + (IS_TOUCH_DEVICE ? 30 : 7); // iOS home-indicator gesture guard
 
   // Look area is intentionally allowed to fill/overrun the viewport.
   if (target.lookArea) return { x:THREE.MathUtils.clamp(x, 25, 75), y:THREE.MathUtils.clamp(y, 25, 75) };
@@ -6236,10 +6283,22 @@ if (IS_TOUCH_DEVICE) {
   }
 
 
+  function mobileGestureGuardPx() {
+    // iOS does not expose a way for a PWA to disable the Home Indicator gesture.
+    // We keep gameplay starts above it instead. Installed iOS PWAs get a little
+    // extra breathing room because the system gesture is more aggressive there.
+    const standaloneIOS = IS_IOS && (window.navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches);
+    return getSafeInsetPx('bottom') + (standaloneIOS ? 34 : 26);
+  }
+
   function startTouch(touch) {
     if (!mobileSessionActive) return false;
     const x = touch.clientX;
     const y = touch.clientY;
+
+    // Never begin gameplay gestures in the OS navigation strip. Existing touches
+    // that started safely can continue, but the bottom edge is not an input target.
+    if (y >= innerHeight - mobileGestureGuardPx()) return false;
 
     // Coordinate-based hit testing deliberately ignores DOM stacking. A HUD
     // element can sit visually above the canvas without ever stealing gameplay
@@ -6728,29 +6787,75 @@ function updatePerformanceManager(now, frameMs) {
   frameEmaMs += (frameMs - frameEmaMs) * .055;
   perfWindowFrames++;
   if (frameMs > 22) perfWindowLongFrames++;
-  if (now - lastPerfAdjustAt >= 1400) {
+
+  if (now - lastPerfAdjustAt >= AUTO_ADJUST_INTERVAL_MS) {
     longFrameRatio = perfWindowFrames ? perfWindowLongFrames / perfWindowFrames : 0;
-    const previousLevel = activeQualityLevel;
-    chooseAutoQualityFromFrameTime();
-    const targetCap = quality.pixelCap;
-    if (frameEmaMs > 19.4 || longFrameRatio > .16) dynamicPixelCap -= IS_TOUCH_DEVICE ? .08 : .06;
-    else if (frameEmaMs < 16.0 && longFrameRatio < .04) dynamicPixelCap += .04;
-    dynamicPixelCap = THREE.MathUtils.clamp(dynamicPixelCap, IS_TOUCH_DEVICE ? .65 : .80, targetCap);
-    if (previousLevel !== activeQualityLevel) dynamicPixelCap = Math.min(dynamicPixelCap, targetCap);
-    const desired = desiredPixelRatio();
-    if (Math.abs(renderer.getPixelRatio() - desired) > .035) {
-      renderer.setPixelRatio(desired);
-      renderer.setSize(innerWidth, innerHeight, false);
+
+    // Manual presets are truly manual. This fixes the previous bug where even
+    // QUALITY could be silently pushed down toward 0.65 DPR by the adaptive path.
+    if (graphicsMode === 'auto' && now >= qualityWarmupUntil) {
+      const bad = frameEmaMs > 20.5 || longFrameRatio > .18;
+      const severe = frameEmaMs > 25.5 || longFrameRatio > .35;
+      const good = frameEmaMs < 16.4 && longFrameRatio < .05;
+      autoBadWindows = bad ? autoBadWindows + 1 : 0;
+      autoGoodWindows = good ? autoGoodWindows + 1 : 0;
+
+      // Hysteresis: two bad windows to step down, three good windows to step up.
+      if (autoBadWindows >= 2) {
+        dynamicPixelCap = Math.max(quality.pixelFloor, dynamicPixelCap - (severe ? .12 : .08));
+        autoBadWindows = 0;
+      } else if (autoGoodWindows >= 3) {
+        dynamicPixelCap = Math.min(quality.pixelCap, dynamicPixelCap + .08);
+        autoGoodWindows = 0;
+      }
+
+      // Detail-tier changes are rare and only happen after sustained pressure.
+      if (severe && dynamicPixelCap <= quality.pixelFloor + .015 && activeQualityLevel !== 'performance') {
+        autoQualityLevel = activeQualityLevel === 'quality' ? 'balanced' : 'performance';
+        activeQualityLevel = autoQualityLevel;
+        quality = QUALITY_PRESETS[activeQualityLevel];
+        dynamicPixelCap = Math.min(Math.max(dynamicPixelCap, quality.pixelFloor), quality.pixelCap);
+      } else if (good && activeQualityLevel === 'performance' && dynamicPixelCap >= quality.pixelCap - .02 && DEVICE_TIER !== 'low') {
+        autoQualityLevel = 'balanced';
+        activeQualityLevel = autoQualityLevel;
+        quality = QUALITY_PRESETS[activeQualityLevel];
+        dynamicPixelCap = Math.max(dynamicPixelCap, quality.pixelFloor);
+      } else if (good && activeQualityLevel === 'balanced' && DEVICE_TIER === 'high' && dynamicPixelCap >= quality.pixelCap - .02) {
+        autoQualityLevel = 'quality';
+        activeQualityLevel = autoQualityLevel;
+        quality = QUALITY_PRESETS[activeQualityLevel];
+        dynamicPixelCap = Math.max(dynamicPixelCap, quality.pixelFloor);
+      }
+
+      const desired = desiredPixelRatio();
+      if (Math.abs(renderer.getPixelRatio() - desired) > .045) {
+        renderer.setPixelRatio(desired);
+        renderer.setSize(innerWidth, innerHeight, false);
+      }
+    } else if (graphicsMode !== 'auto') {
+      // Keep manual modes pinned to the requested cap regardless of transient FPS.
+      const desired = desiredPixelRatio();
+      if (Math.abs(renderer.getPixelRatio() - desired) > .025) {
+        renderer.setPixelRatio(desired);
+        renderer.setSize(innerWidth, innerHeight, false);
+      }
     }
+
     updateGraphicsLabel();
     perfWindowFrames = 0;
     perfWindowLongFrames = 0;
     lastPerfAdjustAt = now;
   }
+
   if (perfOverlayVisible) {
-    const el=ensurePerfOverlay(); el.style.display='block';
-    const info=renderer.info.render;
-    el.textContent=`${Math.round(1000/Math.max(1,frameEmaMs))} FPS  ${frameEmaMs.toFixed(1)} ms\n${activeQualityLevel.toUpperCase()}  DPR ${renderer.getPixelRatio().toFixed(2)}\nDRAW ${info.calls}  TRI ${info.triangles}\nFX ${inkParticles.length}/${deathChunks.length}`;
+    const el = ensurePerfOverlay();
+    el.style.display = 'block';
+    const info = renderer.info.render;
+    const canvas = renderer.domElement;
+    const deviceDpr = window.devicePixelRatio || 1;
+    const renderDpr = renderer.getPixelRatio();
+    const renderScalePct = Math.round((renderDpr / Math.max(1, deviceDpr)) * 100);
+    el.textContent = `INKBREAK PERF\n${Math.round(1000/Math.max(1,frameEmaMs))} FPS   ${frameEmaMs.toFixed(1)} ms\n\nSCREEN   ${innerWidth} x ${innerHeight}\nCANVAS   ${canvas.width} x ${canvas.height}\n\nDEVICE DPR   ${deviceDpr.toFixed(2)}\nRENDER DPR   ${renderDpr.toFixed(2)}\nSCALE        ${renderScalePct}%\n\n${graphicsMode.toUpperCase()} // ${activeQualityLevel.toUpperCase()}\nDRAW ${info.calls}   TRI ${info.triangles}\nFX ${inkParticles.length}/${deathChunks.length}`;
   }
 }
 
@@ -6803,9 +6908,17 @@ document.addEventListener('visibilitychange', () => {
   }
 });
 
-window.addEventListener('resize', () => {
+function refreshViewportAndRenderer() {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setPixelRatio(desiredPixelRatio());
-  renderer.setSize(innerWidth, innerHeight);
+  renderer.setSize(innerWidth, innerHeight, false);
+  if (IS_TOUCH_DEVICE || hudEditing) applyHudLayout(hudWorkingLayout);
+}
+window.addEventListener('resize', refreshViewportAndRenderer, { passive:true });
+window.addEventListener('orientationchange', () => {
+  clearMobileInputs();
+  // Safari updates safe-area env() values a beat after orientationchange.
+  setTimeout(refreshViewportAndRenderer, 120);
+  setTimeout(refreshViewportAndRenderer, 420);
 });

@@ -3,6 +3,7 @@
   --inkbreak-safe-right: env(safe-area-inset-right, 0px);
   --inkbreak-safe-bottom: env(safe-area-inset-bottom, 0px);
   --inkbreak-safe-left: env(safe-area-inset-left, 0px);
+  --inkbreak-gesture-guard: 28px;
 }
 
 .touch-only-setting { display: none !important; }
@@ -54,8 +55,9 @@ body.touch-device .touch-only-setting { display: grid !important; }
   left: 0;
   right: 0;
   bottom: 0;
-  height: max(10px, var(--inkbreak-safe-bottom));
-  border-top: 1px dashed rgba(23,77,154,.28);
+  height: calc(max(10px, var(--inkbreak-safe-bottom)) + var(--inkbreak-gesture-guard));
+  border-top: 1px dashed rgba(23,77,154,.38);
+  background: repeating-linear-gradient(-8deg, rgba(23,77,154,.075) 0 1px, transparent 1px 6px);
 }
 .hud-editor-grid {
   position: absolute;
@@ -197,3 +199,12 @@ body.touch-device .desktop-only-setting { display: none !important; }
 .touch-toggle-setting { grid-template-columns: 1fr auto !important; }
 .touch-toggle-setting input[type="checkbox"] { width: 22px; height: 22px; accent-color: var(--ink); }
 body.hud-editing #bottom-left { z-index: 256 !important; }
+
+body.hud-editing #hud-editor::after {
+  content: "iOS SYSTEM GESTURE ZONE";
+  color: rgba(23,77,154,.55);
+  font: 900 7px/1 "Courier New", monospace;
+  letter-spacing: .08em;
+  text-align: center;
+  padding-top: 5px;
+}

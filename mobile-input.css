@@ -14,12 +14,26 @@ body.touch-device.mobile-playing {
   position: fixed !important;
   inset: 0 !important;
   width: 100% !important;
-  height: 100% !important;
+  height: 100dvh !important;
+  min-height: 100dvh !important;
   overflow: hidden !important;
+  -webkit-overflow-scrolling: auto !important;
   overscroll-behavior: none !important;
   touch-action: none !important;
 }
 
+
+/* iOS Home Indicator cannot be disabled by a web app. Keep gameplay away from
+   the system edge and suppress browser-level scroll/selection gestures everywhere
+   else while a match is active. */
+html:has(body.touch-device.mobile-playing),
+body.touch-device.mobile-playing {
+  overscroll-behavior-x: none !important;
+  overscroll-behavior-y: none !important;
+}
+body.touch-device.mobile-playing * {
+  -webkit-tap-highlight-color: transparent;
+}
 body.touch-device.mobile-playing #game,
 body.touch-device.mobile-playing #game canvas {
   touch-action: none !important;
@@ -68,7 +82,7 @@ body.touch-device #mobile-action-cluster button {
 body.touch-device #mobile-left-controls {
   position: absolute !important;
   left: max(16px, env(safe-area-inset-left)) !important;
-  bottom: max(16px, env(safe-area-inset-bottom)) !important;
+  bottom: max(40px, calc(env(safe-area-inset-bottom, 0px) + var(--inkbreak-gesture-guard))) !important;
   width: 188px !important;
   height: 188px !important;
   z-index: 84 !important;
@@ -105,7 +119,7 @@ body.touch-device #mobile-joystick > span {
 body.touch-device #mobile-action-cluster {
   position: absolute !important;
   right: max(12px, env(safe-area-inset-right)) !important;
-  bottom: max(12px, env(safe-area-inset-bottom)) !important;
+  bottom: max(36px, calc(env(safe-area-inset-bottom, 0px) + var(--inkbreak-gesture-guard))) !important;
   width: 300px !important;
   height: 224px !important;
   z-index: 86 !important;

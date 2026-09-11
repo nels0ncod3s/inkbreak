@@ -3,6 +3,7 @@
   --paper-bright: #fffdf5;
   --ink: #174d9a;
   --ink-soft: rgba(23, 77, 154, 0.48);
+  --inkbreak-gesture-guard: 28px;
 }
 
 * { box-sizing: border-box; }
@@ -28,6 +29,8 @@ html, body {
 #game canvas {
   display: block;
   filter: contrast(1.04) saturate(0.88);
+  image-rendering: auto;
+  transform: translateZ(0);
 }
 
 #paper-noise {
@@ -697,6 +700,15 @@ body.aiming:not(.scoped) #crosshair { transform: translate(-50%, -50%) rotate(-1
   width: 100%;
   accent-color: var(--ink);
   cursor: pointer;
+}
+.setting-row input[type="range"]:disabled { opacity: .42; cursor: not-allowed; }
+.setting-row > .setting-help {
+  display: block;
+  font-size: 8px;
+  line-height: 1.35;
+  font-weight: 700;
+  letter-spacing: .02em;
+  opacity: .55;
 }
 
 #menu[data-mode="pause"] {

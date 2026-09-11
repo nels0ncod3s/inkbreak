@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>INKBREAK // Living Page Build</title>
   <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
   <link rel="icon" href="./icons/favicon-32.png" sizes="32x32" type="image/png" />
@@ -257,10 +257,16 @@
             <span><b>GRAPHICS / PERFORMANCE</b><small id="graphics-value">AUTO</small></span>
             <select id="graphics-setting" aria-label="Graphics quality">
               <option value="auto" selected>AUTO // TARGET 60 FPS</option>
-              <option value="performance">PERFORMANCE</option>
-              <option value="balanced">BALANCED</option>
-              <option value="quality">QUALITY</option>
+              <option value="performance">PERFORMANCE // OLDER DEVICES</option>
+              <option value="balanced">BALANCED // SHARP + SMOOTH</option>
+              <option value="quality">QUALITY // MAX CLARITY</option>
             </select>
+            <small id="graphics-description" class="setting-help">Dynamically adjusts 3D resolution while keeping the HUD crisp.</small>
+          </label>
+          <label class="setting-row" id="render-scale-row">
+            <span><b>RENDER SCALE</b><small id="render-scale-value">AUTO</small></span>
+            <input id="render-scale-setting" type="range" min="75" max="200" step="5" value="200" aria-label="3D render scale" />
+            <small class="setting-help">Advanced 3D resolution cap. AUTO manages this for you.</small>
           </label>
         </div>
         <div class="settings-extra-actions">
@@ -409,8 +415,8 @@
     </div>
   </div>
 
-  <link rel="stylesheet" href="./mobile-input.css?v=20260911-hud-v1" />
-  <link rel="stylesheet" href="./hud-layout.css?v=20260911-hud-v1" />
-  <script type="module" src="./main.js?v=20260911-hud-v1"></script>
+  <link rel="stylesheet" href="./mobile-input.css?v=20260911-ios-sharp-v2" />
+  <link rel="stylesheet" href="./hud-layout.css?v=20260911-ios-sharp-v2" />
+  <script type="module" src="./main.js?v=20260911-ios-sharp-v2"></script>
 </body>
 </html>
