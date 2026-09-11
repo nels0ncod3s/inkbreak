@@ -2077,3 +2077,18 @@ body:not(.story-mode) #mobile-use { display: none; }
   body.story-mode #story-objective { transform: translateX(-50%) scale(.65); }
 }
 body.mobile-look-used #mobile-look-zone .look-hint { opacity: 0; }
+
+/* Performance selector */
+.setting-row select {
+  width: 100%;
+  border: 1px solid rgba(23,77,154,.62);
+  background: rgba(255,253,245,.82);
+  color: var(--ink);
+  font: 800 10px/1.2 "Courier New", monospace;
+  letter-spacing: .04em;
+  padding: 9px 10px;
+  outline: none;
+}
+.setting-row select:focus { box-shadow: 0 0 0 2px rgba(23,77,154,.12); }
+#combat-message.health-pickup { color: #27945a; text-shadow: 0 0 12px rgba(57,185,111,.22); }
+#combat-message.ammo-pickup { color: #b97916; text-shadow: 0 0 12px rgba(224,161,45,.22); }

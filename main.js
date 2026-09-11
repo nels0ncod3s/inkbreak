@@ -200,6 +200,59 @@ function resumeControlSessionAfterOverlay() {
   else controls.lock();
 }
 
+
+// ---------- Adaptive performance / quality manager ----------
+const graphicsSetting = document.querySelector('#graphics-setting');
+const graphicsValue = document.querySelector('#graphics-value');
+const DEVICE_MEMORY_GB = Number(navigator.deviceMemory || 4);
+const CPU_THREADS = Number(navigator.hardwareConcurrency || 4);
+const DEVICE_TIER = (() => {
+  if (!IS_TOUCH_DEVICE) {
+    if (DEVICE_MEMORY_GB >= 8 && CPU_THREADS >= 8) return 'high';
+    return CPU_THREADS <= 4 ? 'low' : 'medium';
+  }
+  if (DEVICE_MEMORY_GB <= 3 || CPU_THREADS <= 4) return 'low';
+  if (DEVICE_MEMORY_GB >= 6 && CPU_THREADS >= 8) return 'high';
+  return 'medium';
+})();
+
+const QUALITY_PRESETS = {
+  performance: { pixelCap: IS_TOUCH_DEVICE ? .90 : 1.10, ghostDistance: 16, hatchDistance: 12, ghostPasses:1, fxScale: .45, chunkScale: .45, cullDistance: 82 },
+  balanced:    { pixelCap: IS_TOUCH_DEVICE ? 1.10 : 1.40, ghostDistance: 28, hatchDistance: 20, ghostPasses:2, fxScale: .72, chunkScale: .72, cullDistance: 112 },
+  quality:     { pixelCap: IS_TOUCH_DEVICE ? 1.28 : 1.75, ghostDistance: 44, hatchDistance: 34, ghostPasses:3, fxScale: 1.00, chunkScale: 1.00, cullDistance: 150 }
+};
+let graphicsMode = (() => { try { return localStorage.getItem('inkbreak_graphics') || 'auto'; } catch { return 'auto'; } })();
+if (!['auto','performance','balanced','quality'].includes(graphicsMode)) graphicsMode = 'auto';
+let autoQualityLevel = DEVICE_TIER === 'low' ? 'performance' : DEVICE_TIER === 'high' ? 'quality' : 'balanced';
+let activeQualityLevel = graphicsMode === 'auto' ? autoQualityLevel : graphicsMode;
+let quality = QUALITY_PRESETS[activeQualityLevel];
+let dynamicPixelCap = quality.pixelCap;
+let frameEmaMs = 16.7;
+let longFrameRatio = 0;
+let perfWindowFrames = 0;
+let perfWindowLongFrames = 0;
+let lastPerfAdjustAt = performance.now();
+let lastLodUpdateAt = 0;
+
+function chooseAutoQualityFromFrameTime() {
+  if (graphicsMode !== 'auto') return;
+  if (frameEmaMs > 21.5 || longFrameRatio > .20) autoQualityLevel = 'performance';
+  else if (DEVICE_TIER === 'low') autoQualityLevel = frameEmaMs < 15.2 && longFrameRatio < .03 ? 'balanced' : 'performance';
+  else if (frameEmaMs < 16.1 && longFrameRatio < .05) autoQualityLevel = DEVICE_TIER === 'high' ? 'quality' : 'balanced';
+  else autoQualityLevel = 'balanced';
+  activeQualityLevel = autoQualityLevel;
+  quality = QUALITY_PRESETS[activeQualityLevel];
+}
+
+function desiredPixelRatio() {
+  return Math.max(.65, Math.min(devicePixelRatio || 1, dynamicPixelCap));
+}
+
+function updateGraphicsLabel() {
+  if (!graphicsValue) return;
+  graphicsValue.textContent = graphicsMode === 'auto' ? `AUTO // ${activeQualityLevel.toUpperCase()}` : graphicsMode.toUpperCase();
+}
+
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(PAPER);
 scene.fog = new THREE.Fog(PAPER, 34, 116);
@@ -208,10 +261,17 @@ const camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.05, 1
 camera.position.set(0, 1.72, 16);
 scene.add(camera);
 
-const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(devicePixelRatio, IS_TOUCH_DEVICE ? 1.4 : 1.75));
+const renderer = new THREE.WebGLRenderer({
+  antialias: !IS_TOUCH_DEVICE || DEVICE_TIER === 'high',
+  powerPreference: 'high-performance',
+  alpha: false,
+  stencil: false
+});
+renderer.setPixelRatio(desiredPixelRatio());
 renderer.setSize(innerWidth, innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.shadowMap.enabled = false; // Unlit paper style: keep mobile GPU/thermal cost predictable.
+renderer.sortObjects = true;
 game.appendChild(renderer.domElement);
 
 const controls = new PointerLockControls(camera, document.body);
@@ -278,6 +338,26 @@ volumeSetting?.addEventListener('input', () => {
   setMasterVolume(value);
 });
 
+if (graphicsSetting) {
+  graphicsSetting.value = graphicsMode;
+  graphicsSetting.addEventListener('change', () => {
+    graphicsMode = graphicsSetting.value;
+    try { localStorage.setItem('inkbreak_graphics', graphicsMode); } catch {}
+    if (graphicsMode === 'auto') {
+      autoQualityLevel = DEVICE_TIER === 'low' ? 'performance' : DEVICE_TIER === 'high' ? 'quality' : 'balanced';
+      activeQualityLevel = autoQualityLevel;
+    } else {
+      activeQualityLevel = graphicsMode;
+    }
+    quality = QUALITY_PRESETS[activeQualityLevel];
+    dynamicPixelCap = quality.pixelCap;
+    renderer.setPixelRatio(desiredPixelRatio());
+    renderer.setSize(innerWidth, innerHeight, false);
+    updateGraphicsLabel();
+  });
+  updateGraphicsLabel();
+}
+
 function refreshChapterMenu() {
   const chapterOneUnlocked = storyProgress >= 1;
   const chapterTwoUnlocked = storyProgress >= 2;
@@ -306,7 +386,7 @@ function saveStoryProgress(value) {
 function launchGameMode(mode, chapter = selectedStoryChapter) {
   getAudioContext();
   gameMode = mode;
-  if (mode === 'story') selectedStoryChapter = chapter;
+  if (mode === 'story') { selectedStoryChapter = chapter; ensureStoryChapterBuilt(chapter); }
   resetRunToBoot();
   gameStarted = true;
   document.body.classList.remove('front-menu');
@@ -402,6 +482,120 @@ const transparentMaterial = new THREE.MeshBasicMaterial({ transparent: true, opa
 const colliders = [];
 const sketchMeshes = [];
 
+// Broad-phase spatial hash shared by player collision and AI steering.
+// Physical collision is deliberately primitive (axis-aligned boxes), even when
+// the visual paper prop is slightly rotated, which avoids invisible AABB corner bulges.
+const COLLIDER_CELL_SIZE = 8;
+const colliderGrid = new Map();
+let colliderGridDirty = true;
+function markColliderGridDirty() { colliderGridDirty = true; }
+function colliderCellKey(x, z) { return `${x},${z}`; }
+function rebuildColliderGrid() {
+  colliderGrid.clear();
+  for (const box of colliders) {
+    const minX = Math.floor(box.min.x / COLLIDER_CELL_SIZE);
+    const maxX = Math.floor(box.max.x / COLLIDER_CELL_SIZE);
+    const minZ = Math.floor(box.min.z / COLLIDER_CELL_SIZE);
+    const maxZ = Math.floor(box.max.z / COLLIDER_CELL_SIZE);
+    for (let gx=minX; gx<=maxX; gx++) for (let gz=minZ; gz<=maxZ; gz++) {
+      const key = colliderCellKey(gx,gz);
+      let bucket = colliderGrid.get(key);
+      if (!bucket) colliderGrid.set(key, bucket=[]);
+      bucket.push(box);
+    }
+  }
+  colliderGridDirty = false;
+}
+function nearbyColliders(x, z, radius = 1.5) {
+  if (colliderGridDirty) rebuildColliderGrid();
+  const minX = Math.floor((x-radius) / COLLIDER_CELL_SIZE);
+  const maxX = Math.floor((x+radius) / COLLIDER_CELL_SIZE);
+  const minZ = Math.floor((z-radius) / COLLIDER_CELL_SIZE);
+  const maxZ = Math.floor((z+radius) / COLLIDER_CELL_SIZE);
+  const out = [];
+  const seen = new Set();
+  for (let gx=minX; gx<=maxX; gx++) for (let gz=minZ; gz<=maxZ; gz++) {
+    const bucket = colliderGrid.get(colliderCellKey(gx,gz));
+    if (!bucket) continue;
+    for (const box of bucket) if (!seen.has(box)) { seen.add(box); out.push(box); }
+  }
+  return out;
+}
+
+const sketchRoots = [];
+
+// GPU-instanced fill batching for static paper architecture. Outlines remain
+// individual so the hand-drawn silhouette stays irregular, but the opaque box
+// fills collapse from dozens of draw calls to two per map region.
+const unitBoxGeometry = new THREE.BoxGeometry(1,1,1);
+const raycastOnlyMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+raycastOnlyMaterial.visible = false;
+let staticBatchRegion = null;
+let staticBatchRecords = [];
+let staticSketchBatch = null;
+const staticInstanceMeshes = [];
+const staticSketchBatchMeshes = [];
+const staticPrimaryInkMaterial = new THREE.LineBasicMaterial({ color: INK, transparent:true, opacity:.92 });
+const staticGhostInkMaterials = [
+  new THREE.LineBasicMaterial({ color: INK, transparent:true, opacity:.23 }),
+  new THREE.LineBasicMaterial({ color: INK, transparent:true, opacity:.18 }),
+  new THREE.LineBasicMaterial({ color: INK, transparent:true, opacity:.13 })
+];
+const staticHatchMaterial = new THREE.LineBasicMaterial({ color: INK_DARK, transparent:true, opacity:.18 });
+const _batchPoint = new THREE.Vector3();
+
+function appendStaticLinePositions(attribute, matrix, target) {
+  for (let i=0; i<attribute.count; i++) {
+    _batchPoint.fromBufferAttribute(attribute, i).applyMatrix4(matrix);
+    target.push(_batchPoint.x, _batchPoint.y, _batchPoint.z);
+  }
+}
+
+function addStaticLineBatch(vertices, region, detail, material, pass=0) {
+  if (!vertices?.length) return;
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+  geometry.computeBoundingSphere();
+  const lines = new THREE.LineSegments(geometry, material);
+  lines.name = `static-${detail}-${region}-${pass}`;
+  lines.userData.region = region;
+  lines.userData.sketchDetail = detail;
+  lines.userData.sketchPass = pass;
+  scene.add(lines);
+  staticSketchBatchMeshes.push(lines);
+}
+
+function beginStaticBoxBatch(region) {
+  staticBatchRegion = region;
+  staticBatchRecords = [];
+  staticSketchBatch = { region, primary:[], ghosts:[[],[],[]], hatch:[] };
+}
+function endStaticBoxBatch() {
+  if (!staticBatchRegion) return;
+  for (const shade of [false,true]) {
+    const records = staticBatchRecords.filter(r => r.shade === shade);
+    if (!records.length) continue;
+    const instanced = new THREE.InstancedMesh(unitBoxGeometry, shade ? paperShadeMaterial : paperMaterial, records.length);
+    instanced.name = `static-fill-${staticBatchRegion}-${shade ? 'shade' : 'paper'}`;
+    instanced.userData.region = staticBatchRegion;
+    instanced.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+    records.forEach((record,i) => instanced.setMatrixAt(i, record.matrix));
+    instanced.instanceMatrix.needsUpdate = true;
+    instanced.computeBoundingBox?.();
+    instanced.computeBoundingSphere?.();
+    scene.add(instanced);
+    staticInstanceMeshes.push(instanced);
+  }
+  if (staticSketchBatch) {
+    addStaticLineBatch(staticSketchBatch.primary, staticBatchRegion, 'primary', staticPrimaryInkMaterial, 0);
+    staticSketchBatch.ghosts.forEach((verts,i) => addStaticLineBatch(verts, staticBatchRegion, 'ghost', staticGhostInkMaterials[i], i+1));
+    addStaticLineBatch(staticSketchBatch.hatch, staticBatchRegion, 'hatching', staticHatchMaterial, 0);
+  }
+  staticBatchRegion = null;
+  staticBatchRecords = [];
+  staticSketchBatch = null;
+}
+
 function makeSketchBox({
   x = 0, y = 0.5, z = 0,
   w = 1, h = 1, d = 1,
@@ -411,12 +605,23 @@ function makeSketchBox({
   rotationX = 0,
   rotationZ = 0,
   jitter = true,
-  collider = true
+  collider = true,
+  batchFill = true
 }) {
   const geometry = new THREE.BoxGeometry(w, h, d);
-  const mesh = new THREE.Mesh(geometry, solid ? (shade ? paperShadeMaterial : paperMaterial) : transparentMaterial);
+  const useInstancedFill = !!(solid && batchFill && staticBatchRegion);
+  const mesh = new THREE.Mesh(geometry, useInstancedFill ? raycastOnlyMaterial : (solid ? (shade ? paperShadeMaterial : paperMaterial) : transparentMaterial));
   mesh.position.set(x, y, z);
   mesh.rotation.set(rotationX, rotationY, rotationZ);
+  mesh.userData.region = staticBatchRegion || 'dynamic';
+  if (useInstancedFill) {
+    const dummy = new THREE.Object3D();
+    dummy.position.set(x,y,z);
+    dummy.rotation.set(rotationX,rotationY,rotationZ);
+    dummy.scale.set(w,h,d);
+    dummy.updateMatrix();
+    staticBatchRecords.push({ shade, matrix: dummy.matrix.clone() });
+  }
   scene.add(mesh);
 
   addSketchOutlines(mesh, geometry, jitter);
@@ -424,24 +629,51 @@ function makeSketchBox({
   sketchMeshes.push(mesh);
 
   if (collider) {
-    geometry.computeBoundingBox();
-    mesh.updateMatrixWorld(true);
-    const colliderBox = geometry.boundingBox.clone().applyMatrix4(mesh.matrixWorld);
+    const inset = Math.min(.035, Math.min(w,d) * .035);
+    const colliderBox = new THREE.Box3(
+      new THREE.Vector3(x - w/2 + inset, y - h/2, z - d/2 + inset),
+      new THREE.Vector3(x + w/2 - inset, y + h/2, z + d/2 - inset)
+    );
     mesh.userData.colliderBox = colliderBox;
     colliders.push(colliderBox);
+    markColliderGridDirty();
   }
+  sketchRoots.push(mesh);
   return mesh;
 }
 
 function addSketchOutlines(mesh, geometry, jitter = true) {
   const edges = new THREE.EdgesGeometry(geometry, 25);
   const passes = jitter ? 4 : 1;
+
+  // Static architecture is merged by sketch pass. This preserves the messy
+  // multi-line pen look while turning hundreds of little line draw calls into
+  // a handful of region-level calls.
+  if (staticSketchBatch && mesh.userData.region === staticBatchRegion) {
+    mesh.updateMatrixWorld(true);
+    for (let i=0; i<passes; i++) {
+      const local = new THREE.Object3D();
+      if (i > 0) {
+        const dir = i % 2 === 0 ? 1 : -1;
+        local.position.set(0.006 * i * dir, 0.004 * i * -dir, 0.005 * i * dir);
+        local.rotation.set(0.002 * i, -0.003 * i * dir, 0.002 * i * -dir);
+      }
+      local.updateMatrix();
+      const world = mesh.matrixWorld.clone().multiply(local.matrix);
+      appendStaticLinePositions(edges.attributes.position, world, i === 0 ? staticSketchBatch.primary : staticSketchBatch.ghosts[i-1]);
+    }
+    edges.dispose();
+    return;
+  }
+
   for (let i = 0; i < passes; i++) {
     const opacity = i === 0 ? 0.92 : Math.max(0.1, 0.28 - i * 0.05);
     const line = new THREE.LineSegments(
       edges,
       new THREE.LineBasicMaterial({ color: INK, transparent: true, opacity })
     );
+    line.userData.sketchDetail = i === 0 ? 'primary' : 'ghost';
+    line.userData.sketchPass = i;
     if (i > 0) {
       const dir = i % 2 === 0 ? 1 : -1;
       line.position.set(0.006 * i * dir, 0.004 * i * -dir, 0.005 * i * dir);
@@ -452,7 +684,6 @@ function addSketchOutlines(mesh, geometry, jitter = true) {
 }
 
 function addHatching(mesh, w, h, d) {
-  const group = new THREE.Group();
   const count = Math.min(20, Math.max(5, Math.round((w + d) * 0.85)));
   const verts = [];
   for (let i = 0; i < count; i++) {
@@ -462,12 +693,69 @@ function addHatching(mesh, w, h, d) {
     const lift = (i % 3) * 0.015;
     verts.push(x - 0.14, y + 0.01 + lift, d / 2 + 0.003, x + 0.17, y + 0.14 + lift, d / 2 + 0.003);
   }
-  if (verts.length) {
-    const g = new THREE.BufferGeometry();
-    g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
-    group.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: INK_DARK, transparent: true, opacity: 0.18 })));
+  if (!verts.length) return;
+
+  if (staticSketchBatch && mesh.userData.region === staticBatchRegion) {
+    mesh.updateMatrixWorld(true);
+    const attr = new THREE.Float32BufferAttribute(verts,3);
+    appendStaticLinePositions(attr, mesh.matrixWorld, staticSketchBatch.hatch);
+    return;
   }
+
+  const group = new THREE.Group();
+  group.userData.sketchDetail = 'hatching';
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+  group.add(new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: INK_DARK, transparent: true, opacity: 0.18 })));
   mesh.add(group);
+}
+
+function activeRenderRegion() {
+  if (!gameStarted || gameMode === 'arena') return 'arena';
+  return `story${Math.max(0, Math.min(2, selectedStoryChapter))}`;
+}
+
+function updateEnvironmentLOD(now) {
+  if (now - lastLodUpdateAt < 220) return;
+  lastLodUpdateAt = now;
+  const activeRegion = activeRenderRegion();
+  const ghost2 = quality.ghostDistance * quality.ghostDistance;
+  const hatch2 = quality.hatchDistance * quality.hatchDistance;
+  const cull2 = quality.cullDistance * quality.cullDistance;
+
+  staticInstanceMeshes.forEach(mesh => {
+    mesh.visible = mesh.userData.region === activeRegion;
+  });
+  staticSketchBatchMeshes.forEach(mesh => {
+    const active = mesh.userData.region === activeRegion;
+    const detail = mesh.userData.sketchDetail;
+    if (!active) { mesh.visible = false; return; }
+    if (detail === 'primary') mesh.visible = true;
+    else if (detail === 'ghost') mesh.visible = mesh.userData.sketchPass <= quality.ghostPasses;
+    else if (detail === 'hatching') mesh.visible = activeQualityLevel !== 'performance';
+  });
+
+  for (const root of sketchRoots) {
+    const region = root.userData.region;
+    if (region && region !== 'dynamic' && region !== activeRegion) {
+      root.visible = false;
+      continue;
+    }
+    root.visible = true;
+    const dx = root.position.x - camera.position.x;
+    const dz = root.position.z - camera.position.z;
+    const dist2 = dx*dx + dz*dz;
+    // Primary outlines stay until conservative far culling. Ghost passes and
+    // hatching disappear much sooner, cutting the most expensive sketch layers.
+    root.children.forEach(child => {
+      const detail = child.userData?.sketchDetail;
+      if (detail === 'ghost') child.visible = dist2 <= ghost2 && (child.userData.sketchPass || 1) <= quality.ghostPasses;
+      else if (detail === 'hatching') child.visible = dist2 <= hatch2;
+    });
+    if (dist2 > cull2 && region === 'dynamic' && !root.userData.envType) {
+      root.children.forEach(child => { if (child.userData?.sketchDetail !== 'primary') child.visible = false; });
+    }
+  }
 }
 
 function addScribbleLine(points, opacity = 0.55) {
@@ -658,7 +946,9 @@ function addMapLabels() {
   makeLabel('DO NOT TRUST THIS WALL', new THREE.Vector3(0, 3.25, -(HALF_MAP + 0.07)), 0, .68);
 }
 
+beginStaticBoxBatch('arena');
 buildMap();
+endStaticBoxBatch();
 
 // ---------- Story Mode prototype map ----------
 const STORY_X = 140;
@@ -749,7 +1039,6 @@ function createStoryMarker() {
   return group;
 }
 
-buildStoryMap();
 storyMarker = createStoryMarker();
 
 // ---------- Story Chapter One // Wrong Page ----------
@@ -788,7 +1077,7 @@ function buildStoryOneMap() {
   makeSketchBox({ x: STORY_ONE_X - 6, y: 1.25, z: 16, w: 5.6, h: 2.5, d: .65, rotationY: .08, shade: true });
   makeSketchBox({ x: STORY_ONE_X + 7, y: .72, z: 9, w: 4.2, h: 1.44, d: 1.1, rotationY: -.12 });
   makeSketchBox({ x: STORY_ONE_X - 7, y: .55, z: -4, w: 3.5, h: 1.1, d: 2.6, shade: true });
-  storyBridgeBarrier = makeSketchBox({ x: STORY_ONE_X, y: .78, z: -6.2, w: 15.5, h: 1.56, d: 1.05, shade: false });
+  storyBridgeBarrier = makeSketchBox({ x: STORY_ONE_X, y: .78, z: -6.2, w: 15.5, h: 1.56, d: 1.05, shade: false, batchFill: false });
   makeLabel('BLANK // NO LINE', new THREE.Vector3(STORY_ONE_X, 2.0, -6.0), 0, .42);
   makeSketchBox({ x: STORY_ONE_X + 8, y: 1.3, z: -12, w: 1.0, h: 2.6, d: 7.2, rotationY: .05, shade: true });
   makeSketchBox({ x: STORY_ONE_X - 8, y: 1.25, z: -20, w: 1.0, h: 2.5, d: 6.4, rotationY: -.05 });
@@ -801,8 +1090,6 @@ function buildStoryOneMap() {
   makeLabel('PROPERTY OF PAGE 4', new THREE.Vector3(STORY_ONE_X + 5, .1, -21), 0, .38);
 }
 
-buildStoryOneMap();
-
 const storyNotes = [];
 let nearbyStoryNote = null;
 let lastStoryNotePromptAt = 0;
@@ -812,9 +1099,6 @@ function createStoryNote(x,z,title,text,chapter=1) {
   storyNotes.push({mesh,title,text,read:false,chapter});
   makeLabel('NOTE',new THREE.Vector3(x,.18,z),0,.18);
 }
-createStoryNote(STORY_ONE_X-10, 15, 'FIELD NOTE // PAGE 17', 'Correctors do not arrive before a boundary failure. If they are already waiting, the page knew the breach was coming.',1);
-createStoryNote(STORY_ONE_X+9, -3, 'FIELD NOTE // REPAIR LOG', 'The Artist is not creating new matter. Every observed stroke matches missing geometry. It may be repairing damage.',1);
-createStoryNote(STORY_ONE_X-4, -23, 'FIELD NOTE // RADIO', 'MARA transmission timestamp: three days before Margin District existed. Source location unresolved.',1);
 
 function updateStoryNotes() {
   nearbyStoryNote=null;
@@ -892,10 +1176,30 @@ function buildStoryTwoMap() {
   makeLabel('PROOFREADER',new THREE.Vector3(STORY_TWO_X,3.2,-31),0,.52);
 }
 
-buildStoryTwoMap();
-createStoryNote(STORY_TWO_X-11, 27, 'ARCHIVE MEMO // INTAKE', 'Every correction begins with classification. Draft. Copy. Borrowed line. The last category has no approved disposal method.',2);
-createStoryNote(STORY_TWO_X+10, 5, 'ARCHIVE LOG // MARA', 'Voiceprint MARA appears in six pages simultaneously. No source body located. Recommendation: treat signal as persistent annotation, not resident.',2);
-createStoryNote(STORY_TWO_X-9, -19, 'ARCHIVE LOG // ARTIST', 'Repair entity continues replacing erased geometry. Hostile designation disputed. The page survives longer when it is active.',2);
+
+const storyChapterBuilt = [false,false,false];
+function ensureStoryChapterBuilt(chapter) {
+  const ch = Math.max(0, Math.min(2, Number(chapter)||0));
+  if (storyChapterBuilt[ch]) return;
+  beginStaticBoxBatch(`story${ch}`);
+  if (ch === 0) {
+    buildStoryMap();
+  } else if (ch === 1) {
+    buildStoryOneMap();
+    createStoryNote(STORY_ONE_X-10, 15, 'FIELD NOTE // PAGE 17', 'Correctors do not arrive before a boundary failure. If they are already waiting, the page knew the breach was coming.',1);
+    createStoryNote(STORY_ONE_X+9, -3, 'FIELD NOTE // REPAIR LOG', 'The Artist is not creating new matter. Every observed stroke matches missing geometry. It may be repairing damage.',1);
+    createStoryNote(STORY_ONE_X-4, -23, 'FIELD NOTE // RADIO', 'MARA transmission timestamp: three days before Margin District existed. Source location unresolved.',1);
+  } else {
+    buildStoryTwoMap();
+    createStoryNote(STORY_TWO_X-11, 27, 'ARCHIVE MEMO // INTAKE', 'Every correction begins with classification. Draft. Copy. Borrowed line. The last category has no approved disposal method.',2);
+    createStoryNote(STORY_TWO_X+10, 5, 'ARCHIVE LOG // MARA', 'Voiceprint MARA appears in six pages simultaneously. No source body located. Recommendation: treat signal as persistent annotation, not resident.',2);
+    createStoryNote(STORY_TWO_X-9, -19, 'ARCHIVE LOG // ARTIST', 'Repair entity continues replacing erased geometry. Hostile designation disputed. The page survives longer when it is active.',2);
+  }
+  endStaticBoxBatch();
+  if (ch === 1) buildStoryOneInteractiveEnvironment();
+  storyChapterBuilt[ch] = true;
+  markColliderGridDirty();
+}
 
 // ---------- Living page / dynamic redraw system ----------
 const dynamicStructures = [];
@@ -907,7 +1211,7 @@ function clearDynamicStructures() {
     const si = sketchMeshes.indexOf(mesh);
     if (si >= 0) sketchMeshes.splice(si, 1);
     const ci = colliders.indexOf(mesh.userData.colliderBox);
-    if (ci >= 0) colliders.splice(ci, 1);
+    if (ci >= 0) { colliders.splice(ci, 1); markColliderGridDirty(); }
     scene.remove(mesh);
     mesh.traverse(obj => {
       if (obj.geometry) obj.geometry.dispose?.();
@@ -990,12 +1294,12 @@ function removeColliderForMesh(mesh) {
   const box = mesh?.userData?.colliderBox;
   if (!box) return;
   const i = colliders.indexOf(box);
-  if (i >= 0) colliders.splice(i, 1);
+  if (i >= 0) { colliders.splice(i, 1); markColliderGridDirty(); }
 }
 
 function restoreColliderForMesh(mesh) {
   const box = mesh?.userData?.colliderBox;
-  if (box && !colliders.includes(box)) colliders.push(box);
+  if (box && !colliders.includes(box)) { colliders.push(box); markColliderGridDirty(); }
 }
 
 function createExplosiveInkBarrel(x, z, story = false) {
@@ -1075,7 +1379,9 @@ function buildInteractiveEnvironment() {
   createEraserCover(-13, 11);
   createEraserCover(13, -13);
 
-  // Chapter One gets its own authored interactions.
+}
+
+function buildStoryOneInteractiveEnvironment() {
   createExplosiveInkBarrel(STORY_ONE_X - 5, -9, true);
   createBreakablePaperWall(STORY_ONE_X + 1.5, -14, 5.2, 2.5, .03, true);
   createInkPuddle(STORY_ONE_X - 7, 6, 2.3, true);
@@ -1120,13 +1426,19 @@ function damageEnvironment(mesh, amount, hitPoint) {
 }
 
 function spawnPaperBreakChunks(center, count = 14) {
-  for (let i=0;i<count;i++) {
-    const g = new THREE.BoxGeometry(.08+Math.random()*.14,.05+Math.random()*.1,.08+Math.random()*.14);
-    const m = new THREE.MeshBasicMaterial({ color: i%2 ? PAPER_BRIGHT : PAPER_SHADE, transparent:true, opacity:1 });
-    const cube = new THREE.Mesh(g,m); addSketchOutlines(cube,g,false);
-    cube.position.copy(center).add(new THREE.Vector3((Math.random()-.5)*2.2,Math.random()*1.8,(Math.random()-.5)*.7));
-    scene.add(cube);
-    deathChunks.push({ mesh:cube, velocity:new THREE.Vector3((Math.random()-.5)*3.2,1+Math.random()*3,(Math.random()-.5)*3.2), spin:new THREE.Vector3(Math.random()*8,Math.random()*8,Math.random()*8), born:performance.now(), life:1100+Math.random()*650, ground:.04, bounces:1 });
+  const scaledCount = Math.max(4, Math.round(count * quality.chunkScale));
+  for (let i=0;i<scaledCount && deathChunks.length<MAX_DEATH_CHUNKS;i++) {
+    const scale = new THREE.Vector3(.08+Math.random()*.14,.05+Math.random()*.10,.08+Math.random()*.14);
+    pushDeathChunk({
+      position:center.clone().add(new THREE.Vector3((Math.random()-.5)*2.2,Math.random()*1.8,(Math.random()-.5)*.7)),
+      scale,
+      velocity:new THREE.Vector3((Math.random()-.5)*3.2,1+Math.random()*3,(Math.random()-.5)*3.2),
+      spin:new THREE.Vector3(Math.random()*8,Math.random()*8,Math.random()*8),
+      duration:1100+Math.random()*650,
+      ground:.04+scale.y*.5,
+      bounces:1,
+      color:i%2 ? PAPER_BRIGHT : PAPER_SHADE
+    });
   }
 }
 
@@ -1516,6 +1828,7 @@ let storyChoiceResolved = false;
 
 let audioContext = null;
 let masterGainNode = null;
+let sharedNoiseBuffer = null;
 let masterVolume = .80;
 
 function getAudioContext() {
@@ -1526,6 +1839,12 @@ function getAudioContext() {
     masterGainNode = audioContext.createGain();
     masterGainNode.gain.value = masterVolume;
     masterGainNode.connect(audioContext.destination);
+    // One reusable noise buffer avoids allocating thousands of short AudioBuffers
+    // during automatic fire, impacts and boss effects. AudioBufferSourceNodes are
+    // one-shot by WebAudio design, but the underlying sample memory is shared.
+    sharedNoiseBuffer = audioContext.createBuffer(1, audioContext.sampleRate, audioContext.sampleRate);
+    const noiseData = sharedNoiseBuffer.getChannelData(0);
+    for (let i=0;i<noiseData.length;i++) noiseData[i] = Math.random()*2-1;
   }
   if (audioContext.state === 'suspended') audioContext.resume();
   return audioContext;
@@ -1578,10 +1897,6 @@ function playImpactSound(kind = 'body') {
 function playNoiseBurst(volume = .035, duration = .07, cutoff = 1200) {
   const ctx = getAudioContext();
   if (!ctx) return;
-  const frames = Math.max(1, Math.floor(ctx.sampleRate * duration));
-  const buffer = ctx.createBuffer(1, frames, ctx.sampleRate);
-  const data = buffer.getChannelData(0);
-  for (let i = 0; i < frames; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / frames);
   const source = ctx.createBufferSource();
   const filter = ctx.createBiquadFilter();
   const gain = ctx.createGain();
@@ -1589,9 +1904,10 @@ function playNoiseBurst(volume = .035, duration = .07, cutoff = 1200) {
   filter.frequency.value = cutoff;
   gain.gain.setValueAtTime(volume, ctx.currentTime);
   gain.gain.exponentialRampToValueAtTime(.001, ctx.currentTime + duration);
-  source.buffer = buffer;
+  source.buffer = sharedNoiseBuffer;
   source.connect(filter).connect(gain).connect(audioOutput(ctx));
-  source.start();
+  const maxOffset = Math.max(0, (sharedNoiseBuffer?.duration || 1) - duration - .01);
+  source.start(0, Math.random()*maxOffset, duration);
 }
 
 function playTone(freq, endFreq, duration, volume = .025, type = 'triangle') {
@@ -1639,7 +1955,14 @@ function playReloadSound(stage = 'start') {
 }
 
 function playPickupSound(type) {
-  playTone(type === 'health' ? 520 : 390, type === 'health' ? 820 : 640, .12, .022, 'triangle');
+  if (type === 'health') {
+    playTone(480, 760, .13, .026, 'sine');
+    setTimeout(() => playTone(720, 980, .10, .018, 'triangle'), 65);
+  } else {
+    playNoiseBurst(.014,.035,2600);
+    playTone(280, 180, .055, .018, 'square');
+    setTimeout(() => playTone(420, 260, .045, .012, 'square'), 42);
+  }
 }
 
 function playRoundStinger(kind = 'round') {
@@ -1869,56 +2192,76 @@ function deactivateEnemy(enemy) {
 }
 
 const deathChunks = [];
+const deathChunkPool = [];
+const deathChunkGeometry = new THREE.BoxGeometry(1,1,1);
+const deathChunkEdges = new THREE.EdgesGeometry(deathChunkGeometry);
+const MAX_DEATH_CHUNKS = IS_TOUCH_DEVICE ? 72 : 150;
+function acquireDeathChunk(color = PAPER_BRIGHT) {
+  let cube = deathChunkPool.pop();
+  if (!cube) {
+    const mat = new THREE.MeshBasicMaterial({ color, transparent:true, opacity:1 });
+    cube = new THREE.Mesh(deathChunkGeometry, mat);
+    const outline = new THREE.LineSegments(deathChunkEdges, new THREE.LineBasicMaterial({ color:INK, transparent:true, opacity:.72 }));
+    outline.userData.chunkOutline = true;
+    cube.add(outline);
+    cube.visible = false;
+    scene.add(cube);
+  }
+  cube.material.color.setHex(color);
+  cube.material.opacity = 1;
+  const outline = cube.children.find(c=>c.userData?.chunkOutline);
+  if (outline) outline.material.opacity = .72;
+  cube.visible = true;
+  return cube;
+}
+function releaseDeathChunk(cube) {
+  cube.visible = false;
+  cube.scale.setScalar(1);
+  if (deathChunkPool.length < MAX_DEATH_CHUNKS) deathChunkPool.push(cube);
+}
+function pushDeathChunk({position, scale, velocity, spin, duration, ground, color=PAPER_BRIGHT, bounces=0}) {
+  if (deathChunks.length >= MAX_DEATH_CHUNKS) return;
+  const cube = acquireDeathChunk(color);
+  cube.position.copy(position);
+  cube.scale.copy(scale);
+  cube.rotation.set(Math.random()*Math.PI,Math.random()*Math.PI,Math.random()*Math.PI);
+  deathChunks.push({ mesh:cube, baseScale:scale.clone(), velocity, spin, born:performance.now(), duration, bounces, ground });
+}
 
 function spawnDeathChunks(enemy, headshot = false) {
   enemy.group.updateMatrixWorld(true);
   const isBoss = enemy.type === 'guardian' || enemy.type === 'artist' || enemy.type === 'proofreader';
-  const chunksPerPart = isBoss ? 5 : (headshot ? 4 : 3);
+  const basePerPart = isBoss ? 5 : (headshot ? 4 : 3);
+  const chunksPerPart = Math.max(1, Math.round(basePerPart * quality.chunkScale));
   const center = enemy.group.position.clone().add(new THREE.Vector3(0, 1.05, 0));
   const worldPos = new THREE.Vector3();
 
   enemy.parts.forEach((part, partIndex) => {
     if (!part.visible) return;
     part.getWorldPosition(worldPos);
-    const localCount = part.userData.hitPart === 'head' && headshot ? chunksPerPart + 2 : chunksPerPart;
+    const localCount = part.userData.hitPart === 'head' && headshot ? chunksPerPart + Math.round(2*quality.chunkScale) : chunksPerPart;
     for (let i = 0; i < localCount; i++) {
+      if (deathChunks.length >= MAX_DEATH_CHUNKS) break;
       const size = (isBoss ? .13 : .085) + Math.random() * (isBoss ? .22 : .14);
-      const geometry = new THREE.BoxGeometry(size * (0.75 + Math.random()*.6), size * (0.75 + Math.random()*.7), size * (0.75 + Math.random()*.6));
-      const material = new THREE.MeshBasicMaterial({
-        color: (partIndex + i) % 3 === 0 ? PAPER_SHADE : PAPER_BRIGHT,
-        transparent: true,
-        opacity: 1
-      });
-      const cube = new THREE.Mesh(geometry, material);
-      cube.position.copy(worldPos).add(new THREE.Vector3(
-        (Math.random() - .5) * .24,
-        (Math.random() - .5) * .30,
-        (Math.random() - .5) * .24
-      ));
-      cube.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, Math.random()*Math.PI);
-      addSketchOutlines(cube, geometry, true);
-      scene.add(cube);
-
-      const away = cube.position.clone().sub(center);
+      const scale = new THREE.Vector3(
+        size * (0.75 + Math.random()*.6),
+        size * (0.75 + Math.random()*.7),
+        size * (0.75 + Math.random()*.6)
+      );
+      const position = worldPos.clone().add(new THREE.Vector3((Math.random()-.5)*.24,(Math.random()-.5)*.30,(Math.random()-.5)*.24));
+      const away = position.clone().sub(center);
       away.y = Math.max(.15, away.y);
       if (away.lengthSq() < .01) away.set(Math.random()-.5, .4, Math.random()-.5);
       away.normalize();
       const burst = isBoss ? 4.8 : (headshot ? 4.1 : 3.2);
       const velocity = away.multiplyScalar(burst * (.55 + Math.random()*.75));
       velocity.y += (isBoss ? 2.8 : 1.9) + Math.random() * (headshot ? 2.5 : 1.6);
-
-      deathChunks.push({
-        mesh: cube,
-        velocity,
-        spin: new THREE.Vector3(
-          (Math.random()-.5) * 13,
-          (Math.random()-.5) * 13,
-          (Math.random()-.5) * 13
-        ),
-        born: performance.now(),
-        duration: isBoss ? 2600 + Math.random()*700 : 1450 + Math.random()*650,
-        bounces: 0,
-        ground: .035 + size * .45
+      pushDeathChunk({
+        position, scale, velocity,
+        spin:new THREE.Vector3((Math.random()-.5)*13,(Math.random()-.5)*13,(Math.random()-.5)*13),
+        duration:isBoss ? 2600+Math.random()*700 : 1450+Math.random()*650,
+        ground:.035 + scale.y*.5,
+        color:(partIndex+i)%3===0 ? PAPER_SHADE : PAPER_BRIGHT
       });
     }
   });
@@ -1956,18 +2299,13 @@ function updateDeathChunks(now, dt) {
 
     const fade = t < .70 ? 1 : 1 - ((t - .70) / .30);
     fx.mesh.material.opacity = Math.max(0, fade);
-    fx.mesh.children.forEach(child => {
-      if (child.material?.transparent) child.material.opacity = Math.max(0, fade * .78);
-    });
+    const outline = fx.mesh.children.find(c=>c.userData?.chunkOutline);
+    if (outline) outline.material.opacity = Math.max(0, fade*.72);
     const shrink = t < .82 ? 1 : Math.max(.03, 1 - (t - .82) / .18);
-    fx.mesh.scale.setScalar(shrink);
+    fx.mesh.scale.set(fx.baseScale.x*shrink, fx.baseScale.y*shrink, fx.baseScale.z*shrink);
 
     if (t >= 1) {
-      fx.mesh.traverse(obj => {
-        if (obj.geometry) obj.geometry.dispose?.();
-        if (obj.material && obj.material !== paperMaterial && obj.material !== paperShadeMaterial) obj.material.dispose?.();
-      });
-      scene.remove(fx.mesh);
+      releaseDeathChunk(fx.mesh);
       deathChunks.splice(i, 1);
     }
   }
@@ -1977,7 +2315,8 @@ const deathScribbles = [];
 function spawnDeathScribbles(enemy, headshot = false) {
   const group = new THREE.Group();
   group.position.copy(enemy.group.position).add(new THREE.Vector3(0, 1.05, 0));
-  const lineCount = (enemy.type === 'guardian' || enemy.type === 'artist' || enemy.type === 'proofreader') ? 58 : (headshot ? 28 : 21);
+  const baseLineCount = (enemy.type === 'guardian' || enemy.type === 'artist' || enemy.type === 'proofreader') ? 58 : (headshot ? 28 : 21);
+  const lineCount = Math.max(8, Math.round(baseLineCount * quality.fxScale));
 
   for (let i = 0; i < lineCount; i++) {
     const points = [];
@@ -2178,7 +2517,7 @@ function enemyHasLineOfSight(enemy, targetPos) {
 }
 
 function enemyCanMoveAt(x, z, radius = .34) {
-  for (const box of colliders) {
+  for (const box of nearbyColliders(x, z, radius + .6)) {
     if (1.7 <= box.min.y || 0 >= box.max.y) continue;
     if (x + radius > box.min.x && x - radius < box.max.x && z + radius > box.min.z && z - radius < box.max.z) return false;
   }
@@ -2191,10 +2530,22 @@ function moveEnemyToward(enemy, target, dt, speed) {
   dir.y = 0;
   if (dir.lengthSq() < .02) return;
   dir.normalize();
+  const radius = enemy.type === 'guardian' || enemy.type === 'artist' || enemy.type === 'proofreader' ? .58 : .34;
   const nx = enemy.navPosition.x + dir.x * speed * dt;
   const nz = enemy.navPosition.z + dir.z * speed * dt;
-  if (enemyCanMoveAt(nx, enemy.navPosition.z, enemy.type === 'guardian' ? .58 : .34)) enemy.navPosition.x = nx;
-  if (enemyCanMoveAt(enemy.navPosition.x, nz, enemy.type === 'guardian' ? .58 : .34)) enemy.navPosition.z = nz;
+  let moved = false;
+  if (enemyCanMoveAt(nx, enemy.navPosition.z, radius)) { enemy.navPosition.x = nx; moved = true; }
+  if (enemyCanMoveAt(enemy.navPosition.x, nz, radius)) { enemy.navPosition.z = nz; moved = true; }
+  if (!moved) {
+    // Collision-aligned fallback steering. This is not a baked NavMesh; INKBREAK
+    // uses the exact same primitive-collider occupancy grid for AI and players.
+    const side = enemy.index % 2 ? 1 : -1;
+    const px = -dir.z * side, pz = dir.x * side;
+    const sx = enemy.navPosition.x + px * speed * dt * .9;
+    const sz = enemy.navPosition.z + pz * speed * dt * .9;
+    if (enemyCanMoveAt(sx, enemy.navPosition.z, radius)) enemy.navPosition.x = sx;
+    if (enemyCanMoveAt(enemy.navPosition.x, sz, radius)) enemy.navPosition.z = sz;
+  }
 }
 
 function updateSniperTelegraph(enemy, now, target) {
@@ -2253,10 +2604,37 @@ function enemyShoot(enemy) {
   }
 }
 
+const tracerPool = [];
+const activeTracers = [];
+const MAX_TRACERS = IS_TOUCH_DEVICE ? 10 : 18;
+function acquireTracer() {
+  let tracer = tracerPool.pop();
+  if (!tracer) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(9),3));
+    const m = new THREE.LineBasicMaterial({color:INK,transparent:true,opacity:.42});
+    tracer = new THREE.Line(g,m);
+    tracer.frustumCulled = false;
+  }
+  tracer.visible=true; scene.add(tracer); return tracer;
+}
+function releaseTracer(tracer) {
+  tracer.visible=false; scene.remove(tracer);
+  if (tracerPool.length < MAX_TRACERS) tracerPool.push(tracer);
+}
 function addTemporaryTracer(a, b) {
+  if (activeTracers.length >= MAX_TRACERS) return;
   const mid = a.clone().lerp(b, .5).add(new THREE.Vector3((Math.random()-.5)*.12, (Math.random()-.5)*.08, (Math.random()-.5)*.12));
-  const tracer = addScribbleLine([a, mid, b], .42);
-  setTimeout(() => scene.remove(tracer), 90);
+  const tracer=acquireTracer();
+  const arr=tracer.geometry.attributes.position.array;
+  arr[0]=a.x;arr[1]=a.y;arr[2]=a.z;arr[3]=mid.x;arr[4]=mid.y;arr[5]=mid.z;arr[6]=b.x;arr[7]=b.y;arr[8]=b.z;
+  tracer.geometry.attributes.position.needsUpdate=true;
+  activeTracers.push({tracer,expireAt:performance.now()+90});
+}
+function updateTracers(now) {
+  for(let i=activeTracers.length-1;i>=0;i--) if(now>=activeTracers[i].expireAt){
+    releaseTracer(activeTracers[i].tracer); activeTracers.splice(i,1);
+  }
 }
 
 function activeEnemyCount() {
@@ -2595,7 +2973,10 @@ function positionAwarenessArrow(el, worldPos, kind, recent, distance) {
   return true;
 }
 
+let lastAwarenessUpdateAt = 0;
 function updateAwarenessIndicators(now) {
+  if (now - lastAwarenessUpdateAt < (IS_TOUCH_DEVICE ? 110 : 70)) return;
+  lastAwarenessUpdateAt = now;
   awarenessArrowPool.forEach(el => el.className = 'awareness-arrow');
   if (!awarenessLayerEl || !controlSessionActive() || storyDialogueBlocking || upgradeChoosing) return;
   camera.updateMatrixWorld(true);
@@ -3197,6 +3578,7 @@ function updateStoryChapterZero(now, dt) {
 
 function continueIntoStoryChapter(nextChapter) {
   selectedStoryChapter = nextChapter;
+  ensureStoryChapterBuilt(nextChapter);
   resetRunToBoot();
   gameStarted = true;
   document.body.classList.remove('front-menu');
@@ -3543,6 +3925,15 @@ function updateEnemies(now, dt) {
     const dist = toPlayer.length();
     const cfg = enemy.config;
 
+    // Enemy LOD: preserve the primary pen contour at distance, drop the extra
+    // ghost strokes / labels first. It reads the same in motion for far targets
+    // while saving several line draw calls per enemy.
+    const enemyDetailVisible = dist <= quality.ghostDistance;
+    enemy.parts.forEach(part => part.children.forEach(child => {
+      if (child.userData?.sketchDetail === 'ghost') child.visible = enemyDetailVisible && (child.userData.sketchPass || 1) <= quality.ghostPasses;
+    }));
+    if (enemy.typeLabel) enemy.typeLabel.visible = dist < Math.min(42, quality.cullDistance * .45);
+
     if (combatIsActive()) {
       if (cfg.behavior === 'rusher') {
         const pressureBoost = squad.sniper ? 1.18 : 1;
@@ -3625,21 +4016,85 @@ function updateEnemies(now, dt) {
   });
 }
 
+const PICKUP_HEALTH = 0x39b96f;
+const PICKUP_HEALTH_ACCENT = 0xd84b4b;
+const PICKUP_AMMO = 0xe0a12d;
+
+// Tiny generated texture atlas: both pickup badges live in one GPU texture.
+const pickupAtlasCanvas = document.createElement('canvas');
+pickupAtlasCanvas.width = 256; pickupAtlasCanvas.height = 128;
+const pickupAtlasCtx = pickupAtlasCanvas.getContext('2d');
+function drawPickupAtlasIcon(type, offsetX) {
+  const ctx=pickupAtlasCtx;
+  ctx.save(); ctx.translate(offsetX,0);
+  ctx.clearRect(0,0,128,128);
+  ctx.lineWidth=8; ctx.strokeStyle='#174d9a';
+  ctx.fillStyle=type==='health' ? '#39b96f' : '#e0a12d';
+  ctx.beginPath(); ctx.arc(64,64,45,0,Math.PI*2); ctx.fill(); ctx.stroke();
+  ctx.strokeStyle='#fffdf5'; ctx.lineWidth=13;
+  if(type==='health'){ctx.beginPath();ctx.moveTo(64,39);ctx.lineTo(64,89);ctx.moveTo(39,64);ctx.lineTo(89,64);ctx.stroke();}
+  else {ctx.lineCap='round';for(const x of [48,64,80]){ctx.beginPath();ctx.moveTo(x,43);ctx.lineTo(x,85);ctx.stroke();}}
+  ctx.restore();
+}
+drawPickupAtlasIcon('health',0); drawPickupAtlasIcon('ammo',128);
+const pickupAtlasTexture = new THREE.CanvasTexture(pickupAtlasCanvas);
+pickupAtlasTexture.colorSpace = THREE.SRGBColorSpace;
+pickupAtlasTexture.minFilter = THREE.LinearFilter;
+const pickupBadgeMaterial = new THREE.MeshBasicMaterial({map:pickupAtlasTexture,transparent:true,depthWrite:false,side:THREE.DoubleSide});
+function makePickupBadgeGeometry(type) {
+  const g = new THREE.PlaneGeometry(.72,.72);
+  const uv = g.attributes.uv;
+  const u0 = type==='health' ? 0 : .5;
+  const u1 = type==='health' ? .5 : 1;
+  uv.setXY(0,u0,1); uv.setXY(1,u1,1); uv.setXY(2,u0,0); uv.setXY(3,u1,0); uv.needsUpdate=true;
+  return g;
+}
+const pickupBadgeGeometries = {health:makePickupBadgeGeometry('health'),ammo:makePickupBadgeGeometry('ammo')};
+
+function addPickupPart(group, geometry, material) {
+  const mesh = new THREE.Mesh(geometry, material);
+  addSketchOutlines(mesh, geometry, false);
+  group.add(mesh);
+  return mesh;
+}
+
 function createPickup(type, x, z) {
   const group = new THREE.Group();
-  const geom = new THREE.BoxGeometry(type === 'ammo' ? .72 : .62, .36, .72);
-  const mesh = new THREE.Mesh(geom, new THREE.MeshBasicMaterial({ color: type === 'ammo' ? 0xeee8d8 : 0xfffdf5 }));
-  addSketchOutlines(mesh, geom, true);
-  group.add(mesh);
+  const isHealth = type === 'health';
+  const mainMaterial = new THREE.MeshBasicMaterial({ color: isHealth ? PICKUP_HEALTH : PICKUP_AMMO });
 
-  const ringG = new THREE.RingGeometry(.48, .53, 20);
-  const ring = new THREE.Mesh(ringG, new THREE.MeshBasicMaterial({ color: INK, side: THREE.DoubleSide, transparent: true, opacity: .35 }));
+  if (isHealth) {
+    // Plus-shaped medkit: recognizable from silhouette even without color.
+    addPickupPart(group, new THREE.BoxGeometry(.28,.72,.30), mainMaterial);
+    addPickupPart(group, new THREE.BoxGeometry(.72,.28,.30), mainMaterial);
+    const emblem = new THREE.Mesh(new THREE.BoxGeometry(.17,.17,.315), new THREE.MeshBasicMaterial({ color:PICKUP_HEALTH_ACCENT }));
+    emblem.position.z = .012; group.add(emblem);
+  } else {
+    // Wide ammunition crate with raised cartridge rails.
+    addPickupPart(group, new THREE.BoxGeometry(.92,.34,.62), mainMaterial);
+    const railMat = new THREE.MeshBasicMaterial({ color:0xfff1b8 });
+    for (const ox of [-.25,0,.25]) {
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(.11,.12,.68), railMat);
+      rail.position.set(ox,.20,0); group.add(rail);
+    }
+  }
+
+  const ringG = new THREE.RingGeometry(isHealth ? .52 : .58, isHealth ? .59 : .65, 24);
+  const ring = new THREE.Mesh(ringG, new THREE.MeshBasicMaterial({
+    color: isHealth ? PICKUP_HEALTH : PICKUP_AMMO, side: THREE.DoubleSide, transparent:true, opacity:.34, depthWrite:false
+  }));
   ring.rotation.x = -Math.PI / 2;
-  ring.position.y = -.17;
+  ring.position.y = -.28;
   group.add(ring);
-  group.position.set(x, .45, z);
+
+  const badge = new THREE.Mesh(pickupBadgeGeometries[type], pickupBadgeMaterial.clone());
+  badge.position.y = 1.18;
+  badge.material.opacity = .92;
+  group.add(badge);
+
+  group.position.set(x, .52, z);
   scene.add(group);
-  pickups.push({ type, group, active: true, respawnAt: 0, phase: Math.random() * 10 });
+  pickups.push({ type, group, ring, badge, active:true, respawnAt:0, phase:Math.random()*10 });
 }
 
 createPickup('ammo', -8, 6);
@@ -3656,17 +4111,24 @@ function updatePickups(now) {
       return;
     }
     p.group.rotation.y = now * .001 + p.phase;
-    p.group.position.y = .48 + Math.sin(now * .003 + p.phase) * .1;
+    const pulse = .5 + .5*Math.sin(now*.004 + p.phase);
+    p.group.position.y = .50 + Math.sin(now * .003 + p.phase) * .09;
+    if (p.ring) {
+      const s = 1 + pulse*.10;
+      p.ring.scale.set(s,s,s);
+      p.ring.material.opacity = .22 + pulse*.20;
+    }
+    if (p.badge) { p.badge.material.opacity = .72 + pulse*.24; p.badge.lookAt(camera.position); }
     const dx = camera.position.x - p.group.position.x;
     const dz = camera.position.z - p.group.position.z;
     if (dx*dx + dz*dz < 1.6) {
       if (p.type === 'health' && playerHealth < playerMaxHealth) {
         playerHealth = Math.min(playerMaxHealth, playerHealth + 35);
         updateHealthHud();
-        showCombatMessage('+ HEALTH // 35');
+        showCombatMessage('+ HEALTH // 35', 650, 'health');
         playPickupSound('health');
       } else if (p.type === 'ammo' && addAmmoToCurrentWeapon(24)) {
-        showCombatMessage('+ AMMO // CURRENT WEAPON');
+        showCombatMessage('+ AMMO // CURRENT WEAPON', 650, 'ammo');
         playPickupSound('ammo');
       } else return;
       p.active = false;
@@ -3701,15 +4163,35 @@ function flashMuzzle() {
   muzzleHideAt = performance.now() + 48;
 }
 
-// Tiny paper casings help sell the automatic fire without requiring particle textures.
+// Tiny paper casings are pooled. Automatic fire used to allocate/dispose a
+// geometry every shot, which is exactly the sort of tiny decision that becomes
+// a stutter factory on mobile after thirty seconds.
 const shellCasings = [];
+const shellCasingPool = [];
+const shellCasingGeometry = new THREE.BoxGeometry(.035, .025, .09);
+const MAX_SHELL_CASINGS = IS_TOUCH_DEVICE ? 12 : 24;
+function acquireShellCasing() {
+  let casing = shellCasingPool.pop();
+  if (!casing) {
+    casing = new THREE.Mesh(shellCasingGeometry, gunShade);
+    const edges = new THREE.EdgesGeometry(shellCasingGeometry);
+    const outline = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: INK, transparent:true, opacity:.72 }));
+    casing.add(outline);
+  }
+  casing.visible = true;
+  if (casing.parent !== weaponRig) weaponRig.add(casing);
+  return casing;
+}
+function releaseShellCasing(casing) {
+  casing.visible = false;
+  weaponRig.remove(casing);
+  if (shellCasingPool.length < MAX_SHELL_CASINGS) shellCasingPool.push(casing);
+}
 function ejectCasing() {
-  const g = new THREE.BoxGeometry(.035, .025, .09);
-  const casing = new THREE.Mesh(g, gunShade);
-  addSketchOutlines(casing, g, false);
+  if (shellCasings.length >= MAX_SHELL_CASINGS || quality.fxScale < .55 && Math.random() < .45) return;
+  const casing = acquireShellCasing();
   casing.position.set(.20, .07, -.02);
   casing.rotation.set(Math.random(), Math.random(), Math.random());
-  weaponRig.add(casing);
   shellCasings.push({
     mesh: casing,
     velocity: new THREE.Vector3(.9 + Math.random() * .35, .45 + Math.random() * .25, .12 + Math.random() * .25),
@@ -3728,8 +4210,7 @@ function updateShellCasings(dt) {
     c.mesh.rotation.y += c.spin.y * dt;
     c.mesh.rotation.z += c.spin.z * dt;
     if (c.life <= 0) {
-      weaponRig.remove(c.mesh);
-      c.mesh.geometry.dispose();
+      releaseShellCasing(c.mesh);
       shellCasings.splice(i, 1);
     }
   }
@@ -4245,8 +4726,11 @@ function updateWeaponAnimation(now, dt) {
 }
 
 
-function showCombatMessage(text, duration = 650) {
+function showCombatMessage(text, duration = 650, kind = '') {
   combatMessageEl.textContent = text;
+  combatMessageEl.classList.remove('health-pickup','ammo-pickup');
+  if (kind === 'health') combatMessageEl.classList.add('health-pickup');
+  if (kind === 'ammo') combatMessageEl.classList.add('ammo-pickup');
   combatMessageEl.classList.add('visible');
   clearTimeout(showCombatMessage.timer);
   showCombatMessage.timer = setTimeout(() => combatMessageEl.classList.remove('visible'), duration);
@@ -4348,7 +4832,7 @@ function overlapsBoxXZ(x, z, box, radius = PLAYER_RADIUS) {
 
 function canOccupyAt(x, z, height = currentColliderHeight(), feetY = verticalOffset) {
   const headY = feetY + height;
-  for (const box of colliders) {
+  for (const box of nearbyColliders(x, z, PLAYER_RADIUS + .8)) {
     if (!overlapsBoxXZ(x, z, box)) continue;
     const verticalOverlap = headY > box.min.y + .002 && feetY < box.max.y - .002;
     if (verticalOverlap) return false;
@@ -4358,7 +4842,7 @@ function canOccupyAt(x, z, height = currentColliderHeight(), feetY = verticalOff
 
 function findStepHeightAt(x, z, feetY, height = currentColliderHeight()) {
   const candidates = [];
-  for (const box of colliders) {
+  for (const box of nearbyColliders(x, z, PLAYER_RADIUS + STEP_HEIGHT + .8)) {
     if (!overlapsBoxXZ(x, z, box)) continue;
     const rise = box.max.y - feetY;
     if (rise > .025 && rise <= STEP_HEIGHT + .015) candidates.push(box.max.y + SURFACE_EPSILON);
@@ -4374,7 +4858,7 @@ function findLandingSurface(x, z, previousFeetY, nextFeetY, height = currentColl
   let best = null;
   const special = specialWalkableSurfaceHeight(x, z);
   if (special !== null && special <= previousFeetY + .62 && special >= nextFeetY - .08) best = special;
-  for (const box of colliders) {
+  for (const box of nearbyColliders(x, z, PLAYER_RADIUS + .8)) {
     if (!overlapsBoxXZ(x, z, box, PLAYER_RADIUS * .84)) continue;
     const top = box.max.y;
     if (top <= previousFeetY + .055 && top >= nextFeetY - .065) {
@@ -4389,7 +4873,7 @@ function findCeilingHeight(x, z, previousFeetY, nextFeetY, height = currentColli
   const previousHead = previousFeetY + height;
   const nextHead = nextFeetY + height;
   let ceiling = null;
-  for (const box of colliders) {
+  for (const box of nearbyColliders(x, z, PLAYER_RADIUS + .8)) {
     if (!overlapsBoxXZ(x, z, box, PLAYER_RADIUS * .82)) continue;
     if (box.min.y >= previousHead - .02 && box.min.y <= nextHead + .02) {
       if (ceiling === null || box.min.y < ceiling) ceiling = box.min.y;
@@ -4471,6 +4955,27 @@ function tryJump() {
 
 function collidesAt(x, z, height = currentColliderHeight()) {
   return !canOccupyAt(x, z, height);
+}
+
+function resolvePlayerPenetration() {
+  const height = currentColliderHeight();
+  if (canOccupyAt(camera.position.x, camera.position.z, height, verticalOffset)) return false;
+  // Dynamic redraws and edge-case spawn positions can place the capsule inside a
+  // primitive box. Search a tiny ring around the player instead of allowing the
+  // controller to jitter forever against an invisible seam.
+  for (let radius=.12; radius<=1.25; radius+=.12) {
+    for (let i=0;i<12;i++) {
+      const a=i/12*Math.PI*2;
+      const x=camera.position.x+Math.cos(a)*radius;
+      const z=camera.position.z+Math.sin(a)*radius;
+      if (canOccupyAt(x,z,height,verticalOffset)) {
+        camera.position.x=x; camera.position.z=z;
+        velocity.x*=.35; velocity.z*=.35;
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function updateMovement(dt) {
@@ -4618,6 +5123,8 @@ function updateMovement(dt) {
       grounded = false;
     }
   }
+
+  resolvePlayerPenetration();
 
   const desiredEyeHeight = (crouching || sliding) ? CROUCH_EYE_HEIGHT : STAND_EYE_HEIGHT;
   currentEyeHeight = THREE.MathUtils.damp(currentEyeHeight, desiredEyeHeight, sliding ? 18 : 13, dt);
@@ -5358,30 +5865,57 @@ function fireTestShot() {
   if (currentWeaponId === 'marker' && !hitAnyEnemy) showCombatMessage('MARKER // HEAVY STROKE', 260);
 }
 
+const worldImpactGeometry = new THREE.CircleGeometry(.055, 7);
+const worldImpactMaterial = new THREE.MeshBasicMaterial({ color: INK_DARK, transparent:true, opacity:.72, depthWrite:false, side:THREE.DoubleSide });
+const worldImpactPool = [];
+const MAX_WORLD_IMPACTS = IS_TOUCH_DEVICE ? 38 : 64;
 function spawnWorldImpact(hit) {
-  const dot = new THREE.Mesh(
-    new THREE.CircleGeometry(.055, 9),
-    new THREE.MeshBasicMaterial({ color: INK_DARK, transparent: true, opacity: .72, depthWrite: false, side: THREE.DoubleSide })
-  );
+  let dot = worldImpactPool.pop();
+  if (!dot) dot = new THREE.Mesh(worldImpactGeometry, worldImpactMaterial);
   const normal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
   dot.position.copy(hit.point).addScaledVector(normal, .012);
   dot.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
+  dot.visible = true;
   scene.add(dot);
   hitDots.push(dot);
-  if (hitDots.length > 70) scene.remove(hitDots.shift());
+  if (hitDots.length > MAX_WORLD_IMPACTS) {
+    const old = hitDots.shift();
+    scene.remove(old); old.visible=false; worldImpactPool.push(old);
+  }
 }
 
 const inkParticles = [];
-function spawnInkBurst(point, count = 6, spread = .32) {
-  for (let i = 0; i < count; i++) {
-    const r = .022 + Math.random() * .05;
-    const dot = new THREE.Mesh(
-      new THREE.CircleGeometry(r, 7),
+const inkParticlePool = [];
+const inkParticleGeometry = new THREE.CircleGeometry(1, 6);
+const MAX_INK_PARTICLES = IS_TOUCH_DEVICE ? 70 : 120;
+function acquireInkParticle() {
+  let mesh = inkParticlePool.pop();
+  if (!mesh) {
+    mesh = new THREE.Mesh(
+      inkParticleGeometry,
       new THREE.MeshBasicMaterial({ color: INK_DARK, transparent: true, opacity: .78, side: THREE.DoubleSide, depthWrite: false })
     );
+    mesh.visible = false;
+    scene.add(mesh);
+  }
+  mesh.visible = true;
+  mesh.material.opacity = .78;
+  return mesh;
+}
+function releaseInkParticle(mesh) {
+  mesh.visible = false;
+  mesh.scale.setScalar(1);
+  if (inkParticlePool.length < MAX_INK_PARTICLES) inkParticlePool.push(mesh);
+}
+function spawnInkBurst(point, count = 6, spread = .32) {
+  const scaledCount = Math.max(1, Math.round(count * quality.fxScale));
+  const available = Math.max(0, MAX_INK_PARTICLES - inkParticles.length);
+  for (let i = 0; i < Math.min(scaledCount, available); i++) {
+    const r = .022 + Math.random() * .05;
+    const dot = acquireInkParticle();
+    dot.scale.setScalar(r);
     dot.position.copy(point).add(new THREE.Vector3((Math.random()-.5)*.10, (Math.random()-.5)*.10, (Math.random()-.5)*.10));
     dot.lookAt(camera.position);
-    scene.add(dot);
     inkParticles.push({
       mesh: dot,
       velocity: new THREE.Vector3((Math.random()-.5)*spread*4.2, Math.random()*spread*4.0 + .35, (Math.random()-.5)*spread*4.2),
@@ -5400,45 +5934,114 @@ function updateInkParticles(dt) {
     p.mesh.lookAt(camera.position);
     p.mesh.material.opacity = Math.max(0, Math.min(.78, p.life / .35));
     if (p.life <= 0) {
-      p.mesh.geometry.dispose();
-      p.mesh.material.dispose();
-      scene.remove(p.mesh);
+      releaseInkParticle(p.mesh);
       inkParticles.splice(i, 1);
     }
   }
 }
 
+const FIXED_SIM_STEP = 1 / 60;
+const MAX_SIM_STEPS = 3;
+let simAccumulator = 0;
+let perfOverlay = null;
+let perfOverlayVisible = new URLSearchParams(location.search).has('perf');
+function ensurePerfOverlay() {
+  if (perfOverlay) return perfOverlay;
+  perfOverlay = document.createElement('pre');
+  perfOverlay.id = 'perf-overlay';
+  Object.assign(perfOverlay.style,{position:'fixed',left:'10px',top:'10px',zIndex:'9999',margin:'0',padding:'7px 9px',background:'rgba(255,253,245,.82)',border:'1px solid #174d9a',color:'#174d9a',font:'700 10px/1.35 Courier New,monospace',pointerEvents:'none'});
+  document.body.appendChild(perfOverlay);
+  return perfOverlay;
+}
+window.addEventListener('keydown', e => {
+  if (e.code === 'F3') {
+    e.preventDefault();
+    perfOverlayVisible = !perfOverlayVisible;
+    if (perfOverlay) perfOverlay.style.display = perfOverlayVisible ? 'block' : 'none';
+  }
+});
+
+function updatePerformanceManager(now, frameMs) {
+  frameEmaMs += (frameMs - frameEmaMs) * .055;
+  perfWindowFrames++;
+  if (frameMs > 22) perfWindowLongFrames++;
+  if (now - lastPerfAdjustAt >= 1400) {
+    longFrameRatio = perfWindowFrames ? perfWindowLongFrames / perfWindowFrames : 0;
+    const previousLevel = activeQualityLevel;
+    chooseAutoQualityFromFrameTime();
+    const targetCap = quality.pixelCap;
+    if (frameEmaMs > 19.4 || longFrameRatio > .16) dynamicPixelCap -= IS_TOUCH_DEVICE ? .08 : .06;
+    else if (frameEmaMs < 16.0 && longFrameRatio < .04) dynamicPixelCap += .04;
+    dynamicPixelCap = THREE.MathUtils.clamp(dynamicPixelCap, IS_TOUCH_DEVICE ? .65 : .80, targetCap);
+    if (previousLevel !== activeQualityLevel) dynamicPixelCap = Math.min(dynamicPixelCap, targetCap);
+    const desired = desiredPixelRatio();
+    if (Math.abs(renderer.getPixelRatio() - desired) > .035) {
+      renderer.setPixelRatio(desired);
+      renderer.setSize(innerWidth, innerHeight, false);
+    }
+    updateGraphicsLabel();
+    perfWindowFrames = 0;
+    perfWindowLongFrames = 0;
+    lastPerfAdjustAt = now;
+  }
+  if (perfOverlayVisible) {
+    const el=ensurePerfOverlay(); el.style.display='block';
+    const info=renderer.info.render;
+    el.textContent=`${Math.round(1000/Math.max(1,frameEmaMs))} FPS  ${frameEmaMs.toFixed(1)} ms\n${activeQualityLevel.toUpperCase()}  DPR ${renderer.getPixelRatio().toFixed(2)}\nDRAW ${info.calls}  TRI ${info.triangles}\nFX ${inkParticles.length}/${deathChunks.length}`;
+  }
+}
+
 function animate(now) {
   requestAnimationFrame(animate);
-  const dt = Math.min((now - lastTime) / 1000, 0.04);
+  const rawDt = Math.min((now - lastTime) / 1000, 0.10);
+  const frameMs = rawDt * 1000;
   lastTime = now;
+  updatePerformanceManager(now, frameMs);
+
   updateAimState(now);
-  updateMobileLook(dt);
-  updateMovement(dt);
+  updateMobileLook(rawDt);
+
+  simAccumulator = Math.min(simAccumulator + rawDt, FIXED_SIM_STEP * MAX_SIM_STEPS);
+  let simSteps = 0;
+  while (simAccumulator >= FIXED_SIM_STEP && simSteps < MAX_SIM_STEPS) {
+    updateMovement(FIXED_SIM_STEP);
+    updateEnemies(now, FIXED_SIM_STEP);
+    updateDeathChunks(now, FIXED_SIM_STEP);
+    updateDeathScribbles(now, FIXED_SIM_STEP);
+    updateInkParticles(FIXED_SIM_STEP);
+    updateShellCasings(FIXED_SIM_STEP);
+    simAccumulator -= FIXED_SIM_STEP;
+    simSteps++;
+  }
+
   updateRoundProgression(now);
-  updateArenaObjective(now, dt);
-  updateStoryMode(now, dt);
+  updateArenaObjective(now, rawDt);
+  updateStoryMode(now, rawDt);
   updateDynamicStructures(now);
-  updateInteractiveEnvironment(now, dt);
+  updateInteractiveEnvironment(now, rawDt);
   updateStoryNotes();
   updateAwarenessIndicators(now);
+  updateEnvironmentLOD(now);
   if (controlSessionActive() && triggerHeld) fireTestShot();
-  updateEnemies(now, dt);
-  updateDeathChunks(now, dt);
-  updateDeathScribbles(now, dt);
-  updateInkParticles(dt);
   updatePickups(now);
-  updateWeaponAnimation(now, dt);
-  updateShellCasings(dt);
+  updateTracers(now);
+  updateWeaponAnimation(now, rawDt);
   if (muzzleFlash.visible && now >= muzzleHideAt) muzzleFlash.visible = false;
 
   renderer.render(scene, camera);
 }
 requestAnimationFrame(animate);
 
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) {
+    lastTime = performance.now();
+    simAccumulator = 0;
+  }
+});
+
 window.addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
-  renderer.setPixelRatio(Math.min(devicePixelRatio, IS_TOUCH_DEVICE ? 1.4 : 1.75));
+  renderer.setPixelRatio(desiredPixelRatio());
   renderer.setSize(innerWidth, innerHeight);
 });

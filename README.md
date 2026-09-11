@@ -33,7 +33,7 @@ The mobile build is designed for landscape orientation and uses a reduced, touch
 
 - Left virtual joystick — analogue movement with a radial deadzone
 - Push the joystick fully forward — automatic sprint
-- Drag anywhere across the clear right half — smooth camera look
+- Drag anywhere on clear gameplay space (outside controls) — smooth camera look
 - FIRE — hold to continuously fire / repeatedly use the knife
 - AIM — tap to toggle ADS; the Ruler Rifle switches into its scope
 - RELOAD — dedicated reload button
@@ -44,7 +44,7 @@ The mobile build is designed for landscape orientation and uses a reduced, touch
 - USE — Story notes and interactions
 - II — pause
 
-On supported mobile browsers, entering a match requests fullscreen and attempts to lock the screen to landscape. Mobile browsers do not universally permit a webpage to force rotation, especially iOS Safari, so portrait orientation also shows an INKBREAK-themed `ROTATE THE PAGE` screen until the device is turned sideways. A web-app manifest with `orientation: landscape` is included as an additional hint for installed/home-screen launches.
+The installed PWA requests landscape orientation through the manifest. Browser pages cannot universally force rotation, especially iOS Safari, so portrait orientation shows an INKBREAK-themed `ROTATE THE PAGE` screen until the device is turned sideways. Gameplay input does not wait on fullscreen/orientation APIs.
 
 ## Mobile HUD
 
@@ -136,3 +136,44 @@ not DOM stacking, so transparent HUD layers cannot intercept look input. Pointer
 capture and the previous competing look-overlay handlers were removed. The joystick
 becomes active synchronously when a mobile match starts and does not wait on
 fullscreen or orientation APIs.
+
+## Performance / geometry optimization pass (2026-09-11)
+
+This build now includes a browser-oriented performance manager designed to hold a 60 FPS target where the device has enough CPU/GPU headroom. It cannot guarantee 60 FPS on every browser/device, so `AUTO` adapts visual cost rather than letting frame time run away.
+
+### Rendering
+
+- Added **AUTO / Performance / Balanced / Quality** presets in Settings.
+- AUTO classifies the device conservatively from available memory / CPU hints, watches frame-time EMA and long-frame ratio, then dynamically reduces render pixel ratio when necessary.
+- Mobile pixel density is capped more aggressively than desktop to reduce GPU load, heat, and battery drain.
+- The paper style uses unlit `MeshBasicMaterial`, so real-time shadows stay disabled by design.
+- Static paper-box fills are **GPU-instanced per active map region**.
+- Static sketch outlines and hatching are **merged into region-level line batches**, preserving the blue-pen look while dramatically reducing line draw calls.
+- Three.js frustum culling remains enabled. Additional region visibility and sketch-detail LOD hide inactive Story/Arena regions and expensive ghost/hatching detail at lower quality levels.
+- Press `F3` (or launch with `?perf`) to show FPS, frame time, pixel ratio, renderer draw calls/triangles, and active pooled FX counts.
+
+### Frame pacing / effects
+
+- Core movement, enemy simulation, cube debris, ink particles, and shell casings now step on a fixed 60 Hz simulation tick with a capped catch-up budget to avoid spiral-of-death spikes.
+- Ink splatter, shell casings, enemy death cubes, bullet impacts, and enemy-shot tracers use bounded object pools instead of repeatedly allocating/discarding Three.js objects during combat.
+- Procedural gunshot noise reuses one Web Audio noise buffer rather than allocating a fresh audio buffer for every event.
+- A death-cube lifetime bug that could leave stale debris alive indefinitely was corrected.
+
+### Map / collision / AI
+
+- Gameplay collision uses simplified primitive `Box3` volumes instead of deriving physical collision from detailed/rotated sketch render meshes.
+- A spatial hash broad phase means the player and AI query nearby colliders instead of scanning every collider in every movement test.
+- Player penetration recovery attempts a small radial escape when dynamic geometry would otherwise leave the player embedded/stuck.
+- AI movement uses the same collider grid as player physics and tries collision-aware lateral steering when its direct route is blocked.
+- This vanilla Three.js project does **not** currently use a NavMesh. The shared primitive-collider grid is therefore the single source of truth for movement/pathing alignment. A real navigation grid/A* layer should be introduced if Story spaces become substantially more complex.
+
+### Lazy scene construction / memory
+
+- Story chapters are now constructed on demand when selected/reached instead of building every Story map at initial page load.
+- INKBREAK currently has no external GLTF/texture/audio asset library to stream. When authored assets are introduced, use `THREE.LoadingManager` plus per-chapter resource ownership/disposal rather than blocking startup with one large bundle.
+
+### Pickups
+
+- **Health:** compact plus-shaped green medkit silhouette, red center emblem, green pulse ring, health badge, distinct rising pickup tone, green HUD notification.
+- **Ammo:** wide amber ammunition-crate silhouette with raised cartridge rails, amber pulse ring, ammo badge, mechanical/noise pickup sound, amber HUD notification.
+- Health/ammo badge art shares one generated canvas texture atlas to avoid separate texture bindings.

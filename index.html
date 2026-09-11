@@ -238,8 +238,17 @@
             <span><b>MASTER VOLUME</b><small id="volume-value">80%</small></span>
             <input id="volume-setting" type="range" min="0" max="100" step="1" value="80" />
           </label>
+          <label class="setting-row">
+            <span><b>GRAPHICS / PERFORMANCE</b><small id="graphics-value">AUTO</small></span>
+            <select id="graphics-setting" aria-label="Graphics quality">
+              <option value="auto" selected>AUTO // TARGET 60 FPS</option>
+              <option value="performance">PERFORMANCE</option>
+              <option value="balanced">BALANCED</option>
+              <option value="quality">QUALITY</option>
+            </select>
+          </label>
         </div>
-        <p class="menu-note">Settings apply immediately. Revolutionary technology, apparently.</p>
+        <p class="menu-note">Settings apply immediately. AUTO dynamically scales resolution and sketch detail toward 60 FPS.</p>
         <button class="menu-secondary menu-back" data-open-panel="main">← BACK</button>
       </section>
 
