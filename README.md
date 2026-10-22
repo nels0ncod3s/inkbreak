@@ -227,3 +227,11 @@ This build now includes a browser-oriented performance manager designed to hold 
 - iOS/PWA controls now reserve an additional bottom gesture-safe margin above the Home Indicator. HUD serialization clamps saved controls out of that area, and the HUD editor visibly shades the unsafe strip.
 - Touches beginning inside the protected bottom OS gesture strip are ignored by gameplay. This cannot disable iOS' Home gesture, but it prevents INKBREAK from asking players to perform normal gameplay gestures directly on top of it.
 - Orientation/resize now recalculates renderer dimensions, pixel ratio, safe areas, and mobile HUD placement after Safari has updated its viewport.
+
+## Red Hostile / combat-polish pass
+
+Hostile characters now use a deliberately different visual language from the player world: low-poly red stick-figure silhouettes, dark-red sketch contours, red sniper telegraphs/tracers, red impact ink, persistent ground splats, and red cube/scribble breakup effects on death. The blue-paper environment and player HUD remain blue so target recognition is immediate.
+
+Gunfeel is weapon-specific rather than sharing one generic response. Firearms now have individual camera kick, muzzle-flash scale, casing scale, ADS transition speed, recoil recovery, and FOV punch while retaining their existing unique sounds, reload timings, models, damage and cadence.
+
+Enemy combat logic now tracks actual perception state. Enemies remember the last position where they saw or heard the player, investigate recent gunfire instead of tracking through walls, seek nearby physical cover when wounded/suppressed, react to nearby ally deaths, and use stronger role behaviours: snipers relocate after firing or when rushed, flankers work side angles, rushers capitalize on sniper pressure, heavies anchor and retreat when critically hurt, while riflemen/heavies can fire harmless suppressive tracers toward a recently lost position.

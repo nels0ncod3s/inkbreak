@@ -6,6 +6,9 @@ const PAPER_BRIGHT = 0xfffdf5;
 const PAPER_SHADE = 0xebe6d8;
 const INK = 0x174d9a;
 const INK_DARK = 0x123d7a;
+const HOSTILE_RED = 0xd92d34;
+const HOSTILE_RED_DARK = 0x8f1f25;
+const HOSTILE_RED_LIGHT = 0xf06a70;
 
 const MAP_SIZE = 72;
 const HALF_MAP = MAP_SIZE / 2;
@@ -994,8 +997,7 @@ function rebuildColliderGrid() {
   colliderGridDirty = false;
 }
 function nearbyColliders(x, z, radius = 1.5) {
-  if (colliderGridDirty) rebuildColliderGrid();
-  const minX = Math.floor((x-radius) / COLLIDER_CELL_SIZE);
+  if (colliderGridDirty) rebuildColliderGrid();  const minX = Math.floor((x-radius) / COLLIDER_CELL_SIZE);
   const maxX = Math.floor((x+radius) / COLLIDER_CELL_SIZE);
   const minZ = Math.floor((z-radius) / COLLIDER_CELL_SIZE);
   const maxZ = Math.floor((z+radius) / COLLIDER_CELL_SIZE);
@@ -1175,6 +1177,27 @@ function addSketchOutlines(mesh, geometry, jitter = true) {
       const dir = i % 2 === 0 ? 1 : -1;
       line.position.set(0.006 * i * dir, 0.004 * i * -dir, 0.005 * i * dir);
       line.rotation.set(0.002 * i, -0.003 * i * dir, 0.002 * i * -dir);
+    }
+    mesh.add(line);
+  }
+}
+
+
+function addHostileSketchOutlines(mesh, geometry, jitter = true) {
+  const edges = new THREE.EdgesGeometry(geometry, 22);
+  const passes = jitter ? 3 : 1;
+  for (let i = 0; i < passes; i++) {
+    const opacity = i === 0 ? .98 : Math.max(.12, .34 - i * .09);
+    const line = new THREE.LineSegments(
+      edges,
+      new THREE.LineBasicMaterial({ color: i === 0 ? HOSTILE_RED_DARK : HOSTILE_RED, transparent: true, opacity })
+    );
+    line.userData.sketchDetail = i === 0 ? 'primary' : 'ghost';
+    line.userData.sketchPass = i;
+    if (i > 0) {
+      const dir = i % 2 === 0 ? 1 : -1;
+      line.position.set(.008 * i * dir, .005 * i * -dir, .006 * i * dir);
+      line.rotation.set(.003 * i, -.004 * i * dir, .003 * i * -dir);
     }
     mesh.add(line);
   }
@@ -1973,8 +1996,7 @@ function damageEnvironment(mesh, amount, hitPoint) {
   if (mesh.userData.envType === 'breakable') {
     mesh.userData.hp -= amount;
     spawnInkBurst(hitPoint, 6, .24);
-    if (mesh.userData.hp <= 0) {
-      removeColliderForMesh(mesh);
+    if (mesh.userData.hp <= 0) {      removeColliderForMesh(mesh);
       mesh.visible = false;
       spawnPaperBreakChunks(mesh.position.clone(), 18);
       playNoiseBurst(.03, .18, 1500);
@@ -2198,6 +2220,7 @@ let recoilKick = 0;
 let recoilPitch = 0;
 let recoilYaw = 0;
 let recoilRoll = 0;
+let aimBlend = 0;
 let weaponSwayX = 0;
 let weaponSwayY = 0;
 let reloadStartAt = 0;
@@ -2567,7 +2590,7 @@ function makeEnemyLabel(text) {
   canvas.height = 96;
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = '#174d9a';
+  ctx.fillStyle = '#d92d34';
   ctx.font = '900 30px Courier New';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
@@ -2583,14 +2606,14 @@ function makeEnemyLabel(text) {
 }
 
 function makeEnemyPart(enemy, geometry, x, y, z, hitPart) {
-  const material = new THREE.MeshBasicMaterial({ color: 0xf9f5e8, transparent: true, opacity: 1 });
+  const material = new THREE.MeshBasicMaterial({ color: HOSTILE_RED, transparent: true, opacity: 1 });
   const mesh = new THREE.Mesh(geometry, material);
   mesh.position.set(x, y, z);
   mesh.userData.enemy = enemy;
   mesh.userData.hitPart = hitPart;
   mesh.userData.basePosition = mesh.position.clone();
   mesh.userData.baseRotation = mesh.rotation.clone();
-  addSketchOutlines(mesh, geometry, true);
+  addHostileSketchOutlines(mesh, geometry, true);
   enemy.visual.add(mesh);
   enemy.parts.push(mesh);
   if (hitPart === 'head') enemy.headMesh = mesh;
@@ -2613,31 +2636,36 @@ function createEnemy(index) {
     knockbackOffset: new THREE.Vector3(), knockbackVelocity: new THREE.Vector3(),
     deathStart: 0, deathDuration: 680, deathDir: Math.random() < .5 ? -1 : 1,
     bossPhase: 1, lastBossPhase: 1,
-    storyEncounterId: 0
+    storyEncounterId: 0,
+    lastSeenAt: -9999, lastSeenPlayerPos: new THREE.Vector3(),
+    coverTarget: new THREE.Vector3(), coverUntil: 0, nextCoverSearchAt: 0,
+    relocateUntil: 0, squadReactionUntil: 0, lastHitAt: -9999
   };
   scene.add(group);
   group.visible = false;
 
-  makeEnemyPart(enemy, new THREE.BoxGeometry(.72, 1.05, .28), 0, 1.03, 0, 'body');
-  makeEnemyPart(enemy, new THREE.BoxGeometry(.46, .46, .34), 0, 1.82, 0, 'head');
-  const leftArm = makeEnemyPart(enemy, new THREE.BoxGeometry(.18, .88, .2), -.48, 1.04, 0, 'body');
-  leftArm.rotation.z = -.08; leftArm.userData.baseRotation.copy(leftArm.rotation);
-  const rightArm = makeEnemyPart(enemy, new THREE.BoxGeometry(.18, .88, .2), .48, 1.04, 0, 'body');
-  rightArm.rotation.z = .08; rightArm.userData.baseRotation.copy(rightArm.rotation);
-  const leftLeg = makeEnemyPart(enemy, new THREE.BoxGeometry(.2, .86, .22), -.22, .35, 0, 'body');
-  leftLeg.rotation.z = .02; leftLeg.userData.baseRotation.copy(leftLeg.rotation);
-  const rightLeg = makeEnemyPart(enemy, new THREE.BoxGeometry(.2, .86, .22), .22, .35, 0, 'body');
-  rightLeg.rotation.z = -.02; rightLeg.userData.baseRotation.copy(rightLeg.rotation);
+  // Hostiles are intentionally stick-figure-like: thin red strokes against the blue-paper world.
+  // Meshes stay real geometry so head/body hit detection remains reliable.
+  makeEnemyPart(enemy, new THREE.CylinderGeometry(.13, .17, 1.02, 6), 0, 1.03, 0, 'body');
+  makeEnemyPart(enemy, new THREE.SphereGeometry(.25, 8, 6), 0, 1.79, 0, 'head');
+  const leftArm = makeEnemyPart(enemy, new THREE.CylinderGeometry(.065, .065, .92, 5), -.34, 1.13, 0, 'body');
+  leftArm.rotation.z = -.50; leftArm.userData.baseRotation.copy(leftArm.rotation);
+  const rightArm = makeEnemyPart(enemy, new THREE.CylinderGeometry(.065, .065, .92, 5), .34, 1.13, 0, 'body');
+  rightArm.rotation.z = .50; rightArm.userData.baseRotation.copy(rightArm.rotation);
+  const leftLeg = makeEnemyPart(enemy, new THREE.CylinderGeometry(.075, .075, .94, 5), -.17, .40, 0, 'body');
+  leftLeg.rotation.z = .12; leftLeg.userData.baseRotation.copy(leftLeg.rotation);
+  const rightLeg = makeEnemyPart(enemy, new THREE.CylinderGeometry(.075, .075, .94, 5), .17, .40, 0, 'body');
+  rightLeg.rotation.z = -.12; rightLeg.userData.baseRotation.copy(rightLeg.rotation);
 
   const barrel = new THREE.Mesh(
-    new THREE.BoxGeometry(.58, .1, .12),
-    new THREE.MeshBasicMaterial({ color: PAPER_SHADE, transparent: true, opacity: 1 })
+    new THREE.BoxGeometry(.68, .075, .085),
+    new THREE.MeshBasicMaterial({ color: HOSTILE_RED_DARK, transparent: true, opacity: 1 })
   );
-  barrel.position.set(.34, 1.12, -.25);
+  barrel.position.set(.30, 1.19, -.23);
   barrel.rotation.y = -.1;
   barrel.userData.basePosition = barrel.position.clone();
   barrel.userData.baseRotation = barrel.rotation.clone();
-  addSketchOutlines(barrel, barrel.geometry, true);
+  addHostileSketchOutlines(barrel, barrel.geometry, true);
   visual.add(barrel);
   enemy.parts.push(barrel);
 
@@ -2645,12 +2673,12 @@ function createEnemy(index) {
   const bossAdornment = new THREE.Group();
   bossAdornment.visible = false;
   visual.add(bossAdornment);
-  const bossPaper = new THREE.MeshBasicMaterial({ color: 0xeee8d8, transparent: true, opacity: 1 });
+  const bossPaper = new THREE.MeshBasicMaterial({ color: HOSTILE_RED, transparent: true, opacity: 1 });
   const addBossPiece = (g, x, y, z, rz = 0) => {
     const m = new THREE.Mesh(g, bossPaper);
     m.position.set(x, y, z);
     m.rotation.z = rz;
-    addSketchOutlines(m, g, true);
+    addHostileSketchOutlines(m, g, true);
     bossAdornment.add(m);
     return m;
   };
@@ -2663,7 +2691,7 @@ function createEnemy(index) {
   const halo = new THREE.Mesh(haloGeo, bossPaper);
   halo.position.set(0, 2.16, .03);
   halo.rotation.x = Math.PI / 2;
-  addSketchOutlines(halo, haloGeo, true);
+  addHostileSketchOutlines(halo, haloGeo, true);
   bossAdornment.add(halo);
   enemy.bossAdornment = bossAdornment;
 
@@ -2708,6 +2736,8 @@ function configureEnemy(enemy, type, spawnPoint) {
   enemy.lastBossPhase = 1;
   enemy.flankSide = (enemy.index + roundSpawned) % 2 ? 1 : -1;
   enemy.crossoutExecution = false;
+  enemy.lastSeenAt = -9999; enemy.lastSeenPlayerPos.copy(enemy.origin);
+  enemy.coverUntil = 0; enemy.nextCoverSearchAt = 0; enemy.relocateUntil = 0; enemy.squadReactionUntil = 0; enemy.lastHitAt = -9999;
 
   if (enemy.typeLabel) enemy.visual.remove(enemy.typeLabel);
   enemy.typeLabel = makeEnemyLabel(config.label);
@@ -2719,11 +2749,12 @@ function configureEnemy(enemy, type, spawnPoint) {
     if (part.userData.baseRotation) part.rotation.copy(part.userData.baseRotation);
     if (part.material) {
       part.material.opacity = 1;
-      part.material.color.set(type === 'corrector' ? 0xfffef9 : 0xf9f5e8);
+      part.material.color.set(type === 'corrector' ? HOSTILE_RED_LIGHT : HOSTILE_RED);
     }
     part.children.forEach((child, idx) => {
       if (!child.material || child.material.opacity === undefined) return;
-      child.material.opacity = type === 'corrector' ? (idx === 0 ? .96 : .07) : (idx === 0 ? .92 : Math.max(.10, .28 - idx * .05));
+      child.material.opacity = type === 'corrector' ? (idx === 0 ? .98 : .12) : (idx === 0 ? .98 : Math.max(.12, .32 - idx * .06));
+      if (child.material.color) child.material.color.set(idx === 0 ? HOSTILE_RED_DARK : HOSTILE_RED);
     });
   });
 
@@ -2760,12 +2791,12 @@ const deathChunkPool = [];
 const deathChunkGeometry = new THREE.BoxGeometry(1,1,1);
 const deathChunkEdges = new THREE.EdgesGeometry(deathChunkGeometry);
 const MAX_DEATH_CHUNKS = IS_TOUCH_DEVICE ? 72 : 150;
-function acquireDeathChunk(color = PAPER_BRIGHT) {
+function acquireDeathChunk(color = PAPER_BRIGHT, outlineColor = INK) {
   let cube = deathChunkPool.pop();
   if (!cube) {
     const mat = new THREE.MeshBasicMaterial({ color, transparent:true, opacity:1 });
     cube = new THREE.Mesh(deathChunkGeometry, mat);
-    const outline = new THREE.LineSegments(deathChunkEdges, new THREE.LineBasicMaterial({ color:INK, transparent:true, opacity:.72 }));
+    const outline = new THREE.LineSegments(deathChunkEdges, new THREE.LineBasicMaterial({ color:outlineColor, transparent:true, opacity:.72 }));
     outline.userData.chunkOutline = true;
     cube.add(outline);
     cube.visible = false;
@@ -2774,7 +2805,7 @@ function acquireDeathChunk(color = PAPER_BRIGHT) {
   cube.material.color.setHex(color);
   cube.material.opacity = 1;
   const outline = cube.children.find(c=>c.userData?.chunkOutline);
-  if (outline) outline.material.opacity = .72;
+  if (outline) { outline.material.opacity = .72; outline.material.color.setHex(outlineColor); }
   cube.visible = true;
   return cube;
 }
@@ -2783,9 +2814,9 @@ function releaseDeathChunk(cube) {
   cube.scale.setScalar(1);
   if (deathChunkPool.length < MAX_DEATH_CHUNKS) deathChunkPool.push(cube);
 }
-function pushDeathChunk({position, scale, velocity, spin, duration, ground, color=PAPER_BRIGHT, bounces=0}) {
+function pushDeathChunk({position, scale, velocity, spin, duration, ground, color=PAPER_BRIGHT, outlineColor=INK, bounces=0}) {
   if (deathChunks.length >= MAX_DEATH_CHUNKS) return;
-  const cube = acquireDeathChunk(color);
+  const cube = acquireDeathChunk(color, outlineColor);
   cube.position.copy(position);
   cube.scale.copy(scale);
   cube.rotation.set(Math.random()*Math.PI,Math.random()*Math.PI,Math.random()*Math.PI);
@@ -2825,7 +2856,8 @@ function spawnDeathChunks(enemy, headshot = false) {
         spin:new THREE.Vector3((Math.random()-.5)*13,(Math.random()-.5)*13,(Math.random()-.5)*13),
         duration:isBoss ? 2600+Math.random()*700 : 1450+Math.random()*650,
         ground:.035 + scale.y*.5,
-        color:(partIndex+i)%3===0 ? PAPER_SHADE : PAPER_BRIGHT
+        color:(partIndex+i)%3===0 ? HOSTILE_RED_DARK : HOSTILE_RED,
+        outlineColor:HOSTILE_RED_DARK
       });
     }
   });
@@ -2875,6 +2907,52 @@ function updateDeathChunks(now, dt) {
   }
 }
 
+const enemyGroundSplats = [];
+const enemyGroundSplatPool = [];
+const enemyGroundSplatGeometry = new THREE.CircleGeometry(1, 9);
+const MAX_ENEMY_GROUND_SPLATS = IS_TOUCH_DEVICE ? 22 : 42;
+function acquireEnemyGroundSplat() {
+  let mesh = enemyGroundSplatPool.pop();
+  if (!mesh) {
+    mesh = new THREE.Mesh(enemyGroundSplatGeometry, new THREE.MeshBasicMaterial({
+      color: HOSTILE_RED_DARK, transparent:true, opacity:.52, depthWrite:false, side:THREE.DoubleSide
+    }));
+    mesh.rotation.x = -Math.PI / 2;
+    scene.add(mesh);
+  }
+  mesh.visible = true; mesh.material.opacity = .52;
+  return mesh;
+}
+function releaseEnemyGroundSplat(mesh) {
+  mesh.visible = false;
+  if (enemyGroundSplatPool.length < MAX_ENEMY_GROUND_SPLATS) enemyGroundSplatPool.push(mesh);
+}
+function spawnEnemyGroundSplat(position, headshot=false, boss=false) {
+  const count = Math.max(2, Math.round((boss ? 8 : headshot ? 6 : 4) * quality.fxScale));
+  for (let i=0;i<count;i++) {
+    if (enemyGroundSplats.length >= MAX_ENEMY_GROUND_SPLATS) {
+      const oldest = enemyGroundSplats.shift(); releaseEnemyGroundSplat(oldest.mesh);
+    }
+    const mesh = acquireEnemyGroundSplat();
+    const angle = Math.random()*Math.PI*2;
+    const radius = Math.random()*(boss?1.65:.9);
+    mesh.position.set(position.x + Math.cos(angle)*radius, .024 + i*.0003, position.z + Math.sin(angle)*radius);
+    mesh.rotation.z = Math.random()*Math.PI;
+    const sx = (boss?.38:.20) + Math.random()*(boss?.68:.38);
+    mesh.scale.set(sx*(.65+Math.random()*.8), sx*(.55+Math.random()*.65), 1);
+    mesh.material.color.setHex(i%4===0?HOSTILE_RED:HOSTILE_RED_DARK);
+    enemyGroundSplats.push({mesh,born:performance.now(),duration:9000+Math.random()*5000});
+  }
+}
+function updateEnemyGroundSplats(now) {
+  for (let i=enemyGroundSplats.length-1;i>=0;i--) {
+    const fx=enemyGroundSplats[i];
+    const t=(now-fx.born)/fx.duration;
+    if (t>=1) { releaseEnemyGroundSplat(fx.mesh); enemyGroundSplats.splice(i,1); continue; }
+    fx.mesh.material.opacity = .52 * (t<.72?1:1-(t-.72)/.28);
+  }
+}
+
 const deathScribbles = [];
 function spawnDeathScribbles(enemy, headshot = false) {
   const group = new THREE.Group();
@@ -2900,7 +2978,7 @@ function spawnDeathScribbles(enemy, headshot = false) {
       points.push(cursor.clone());
     }
     const geometry = new THREE.BufferGeometry().setFromPoints(points);
-    const material = new THREE.LineBasicMaterial({ color: INK_DARK, transparent: true, opacity: .72 });
+    const material = new THREE.LineBasicMaterial({ color: HOSTILE_RED_DARK, transparent: true, opacity: .78 });
     const line = new THREE.Line(geometry, material);
     group.add(line);
   }
@@ -2917,8 +2995,7 @@ function spawnDeathScribbles(enemy, headshot = false) {
 
 function updateDeathScribbles(now, dt) {
   for (let i = deathScribbles.length - 1; i >= 0; i--) {
-    const fx = deathScribbles[i];
-    const t = THREE.MathUtils.clamp((now - fx.born) / fx.duration, 0, 1);
+    const fx = deathScribbles[i];    const t = THREE.MathUtils.clamp((now - fx.born) / fx.duration, 0, 1);
     fx.group.position.addScaledVector(fx.drift, dt);
     fx.group.position.y -= dt * .38 * (0.4 + t);
     fx.group.rotation.y += fx.spin * dt;
@@ -2945,8 +3022,18 @@ function startEnemyDeath(enemy, part) {
   enemy.deathStart = performance.now();
   enemy.deathDir = Math.random() < .5 ? -1 : 1;
   clearEnemyAimLine(enemy);
+  const deathNow = performance.now();
+  enemies.forEach(ally => {
+    if (ally === enemy || !ally.alive || ally.dying || !ally.activeInRound) return;
+    const d = ally.navPosition.distanceTo(enemy.navPosition);
+    if (d > 14) return;
+    ally.squadReactionUntil = Math.max(ally.squadReactionUntil || 0, deathNow + 1800);
+    if (ally.type === 'rusher') ally.relocateUntil = deathNow + 1600;
+    else ally.coverUntil = Math.max(ally.coverUntil || 0, deathNow + 1200);
+  });
   spawnDeathChunks(enemy, part === 'head');
   spawnDeathScribbles(enemy, part === 'head');
+  spawnEnemyGroundSplat(enemy.group.position, part === 'head', ['guardian','artist','proofreader','redactor'].includes(enemy.type));
   playImpactSound('kill');
 
   if (gameMode === 'story') {
@@ -3041,6 +3128,8 @@ function artistShoot(enemy) {
 function damageEnemy(enemy, amount, part, hitPoint, shotDirection) {
   if (!enemy.alive || enemy.dying || !enemy.activeInRound) return;
   enemy.hp -= amount;
+  enemy.lastHitAt = performance.now();
+  enemy.squadReactionUntil = Math.max(enemy.squadReactionUntil || 0, performance.now() + 900);
   if (enemy.type === 'artist') updateArtistPhase(enemy);
   const killed = enemy.hp <= 0;
   const headshot = part === 'head';
@@ -3063,9 +3152,11 @@ function damageEnemy(enemy, amount, part, hitPoint, shotDirection) {
     showCombatMessage(killed ? 'HEADSHOT // TARGET DOWN' : 'HEADSHOT');
   } else {
     playImpactSound('body');
+    impactFovKick = Math.max(impactFovKick, .42);
+    recoilKick = Math.min(1.35, recoilKick + .035);
   }
 
-  spawnInkBurst(hitPoint, headshot ? 16 : 9, headshot ? .52 : .34);
+  spawnInkBurst(hitPoint, headshot ? 19 : 11, headshot ? .58 : .39, HOSTILE_RED);
   if (killed) startEnemyDeath(enemy, part);
 }
 
@@ -3123,7 +3214,7 @@ function updateSniperTelegraph(enemy, now, target) {
   if (!enemy.aimLine) {
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(6), 3));
-    const material = new THREE.LineBasicMaterial({ color: INK_DARK, transparent: true, opacity: .32 });
+    const material = new THREE.LineBasicMaterial({ color: HOSTILE_RED, transparent: true, opacity: .42 });
     enemy.aimLine = new THREE.Line(geometry, material);
     scene.add(enemy.aimLine);
   }
@@ -3155,8 +3246,19 @@ function enemyShoot(enemy) {
     return;
   }
 
-  if (dist > cfg.range || !enemyHasLineOfSight(enemy, target)) return;
+  const hasLos = enemyHasLineOfSight(enemy, target);
+  if (dist > cfg.range || !hasLos) {
+    // Riflemen/heavies briefly suppress the last known position instead of magically
+    // tracking the player through walls. Suppression tracers cannot damage the player.
+    if ((cfg.behavior === 'rifleman' || cfg.behavior === 'heavy') && performance.now() - enemy.lastSeenAt < 1400) {
+      enemy.lastFiredAt = performance.now();
+      playEnemyShotSound(enemy.type);
+      addTemporaryTracer(origin, enemy.lastSeenPlayerPos.clone().add(new THREE.Vector3((Math.random()-.5)*.8,.55,(Math.random()-.5)*.8)));
+    }
+    return;
+  }
   enemy.lastFiredAt = performance.now();
+  if (enemy.type === 'sniper') enemy.relocateUntil = performance.now() + 1500;
   playEnemyShotSound(enemy.type);
   addTemporaryTracer(origin, target.clone().add(new THREE.Vector3((Math.random()-.5)*.35, (Math.random()-.5)*.25, (Math.random()-.5)*.35)));
   const distanceFactor = THREE.MathUtils.clamp(1 - dist / Math.max(1, cfg.range * 1.35), 0, 1);
@@ -3176,7 +3278,7 @@ function acquireTracer() {
   if (!tracer) {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(9),3));
-    const m = new THREE.LineBasicMaterial({color:INK,transparent:true,opacity:.42});
+    const m = new THREE.LineBasicMaterial({color:HOSTILE_RED,transparent:true,opacity:.50});
     tracer = new THREE.Line(g,m);
     tracer.frustumCulled = false;
   }
@@ -3892,8 +3994,7 @@ function storySpawnIsSafe(point, radius = .62) {
   return enemyCanMoveAt(x,z,radius);
 }
 
-function findSafeStorySpawn(preferred, occupied = []) {
-  // Start with the authored position, then search nearby rings. This prevents a
+function findSafeStorySpawn(preferred, occupied = []) {  // Start with the authored position, then search nearby rings. This prevents a
   // contact from being placed inside a building if the story map changes later.
   const candidates = [preferred];
   const radii = [1.8, 3.2, 4.8, 6.4];
@@ -4593,13 +4694,59 @@ function combatIsActive() {
   return controlSessionActive() && ((gameMode === 'arena' && roundState === 'active') || (gameMode === 'story' && storyCombatStates.includes(storyState) && roundState === 'active'));
 }
 
+
+function positionHasLineOfSight(originPos, targetPos, eyeHeight = 1.25) {
+  const origin = originPos.clone(); origin.y += eyeHeight;
+  const target = targetPos.clone();
+  const direction = target.clone().sub(origin);
+  const dist = direction.length();
+  if (dist < .01) return true;
+  direction.normalize();
+  enemyRaycaster.set(origin, direction); enemyRaycaster.far = dist;
+  const blockers = enemyRaycaster.intersectObjects(sketchMeshes, false).filter(hit => hit.object.visible);
+  return blockers.length === 0 || blockers[0].distance > dist - .25;
+}
+
+function findEnemyCoverPoint(enemy, playerPos) {
+  let best = null;
+  let bestScore = Infinity;
+  const boxes = nearbyColliders(enemy.navPosition.x, enemy.navPosition.z, 9.5);
+  for (const box of boxes) {
+    const height = box.max.y - box.min.y;
+    if (height < 1.05) continue;
+    const center = new THREE.Vector3((box.min.x+box.max.x)*.5, 0, (box.min.z+box.max.z)*.5);
+    const away = center.clone().sub(playerPos); away.y = 0;
+    if (away.lengthSq() < .01) continue;
+    away.normalize();
+    const extent = Math.max(box.max.x-box.min.x, box.max.z-box.min.z) * .5;
+    const candidate = center.clone().addScaledVector(away, extent + .75);
+    if (!enemyCanMoveAt(candidate.x, candidate.z, .36)) continue;
+    if (positionHasLineOfSight(candidate, playerPos, 1.25)) continue; // not actually cover
+    const travel = candidate.distanceTo(enemy.navPosition);
+    if (travel < bestScore) { bestScore = travel; best = candidate; }
+  }
+  return best;
+}
+
+function chooseEnemyRetreatPoint(enemy, playerPos, distance = 7) {
+  const away = enemy.navPosition.clone().sub(playerPos); away.y = 0;
+  if (away.lengthSq() < .01) away.set(enemy.index%2?1:-1,0,1);
+  away.normalize();
+  const side = new THREE.Vector3(-away.z,0,away.x).multiplyScalar(enemy.index%2?1:-1);
+  const candidate = enemy.navPosition.clone().addScaledVector(away,distance).addScaledVector(side,2.4);
+  return enemyCanMoveAt(candidate.x,candidate.z,.36) ? candidate : enemy.origin.clone();
+}
+
 function getEnemySquadContext() {
   const active=enemies.filter(e=>e.alive&&!e.dying&&e.activeInRound);
   return {
     heavy:active.find(e=>e.type==='heavy'||e.type==='guardian'||e.type==='artist'||e.type==='proofreader'||e.type==='redactor')||null,
     sniper:active.find(e=>e.type==='sniper')||null,
     rusher:active.find(e=>e.type==='rusher')||null,
-    flankers:active.filter(e=>e.type==='flanker')
+    flankers:active.filter(e=>e.type==='flanker'),
+    riflemen:active.filter(e=>e.type==='rifleman'),
+    correctors:active.filter(e=>e.type==='corrector'),
+    count:active.length
   };
 }
 
@@ -4641,6 +4788,21 @@ function updateEnemies(now, dt) {
     toPlayer.y = 0;
     const dist = toPlayer.length();
     const cfg = enemy.config;
+    const canSeePlayer = dist < cfg.range + 12 && enemyHasLineOfSight(enemy, target);
+    if (canSeePlayer) {
+      enemy.lastSeenAt = now;
+      enemy.lastSeenPlayerPos.copy(target);
+    }
+    const remembersPlayer = now - enemy.lastSeenAt < 2800;
+    const engageTarget = canSeePlayer ? target : (remembersPlayer ? enemy.lastSeenPlayerPos : enemy.origin);
+    const healthRatio = enemy.hp / Math.max(1, enemy.maxHp);
+    const recentlyHit = now - enemy.lastHitAt < 850;
+    const wantsCover = !['rusher','artist','guardian'].includes(cfg.behavior) && (healthRatio < .34 || recentlyHit || now < enemy.coverUntil);
+    if (wantsCover && now >= enemy.nextCoverSearchAt) {
+      const cover = findEnemyCoverPoint(enemy, target);
+      if (cover) { enemy.coverTarget.copy(cover); enemy.coverUntil = now + 1400; }
+      enemy.nextCoverSearchAt = now + 900 + Math.random()*500;
+    }
 
     // Enemy LOD: preserve the primary pen contour at distance, drop the extra
     // ghost strokes / labels first. It reads the same in motion for far targets
@@ -4652,22 +4814,35 @@ function updateEnemies(now, dt) {
     if (enemy.typeLabel) enemy.typeLabel.visible = dist < Math.min(42, quality.cullDistance * .45);
 
     if (combatIsActive()) {
-      if (cfg.behavior === 'rusher') {
-        const pressureBoost = squad.sniper ? 1.18 : 1;
-        if (dist > 1.45) moveEnemyToward(enemy, target, dt, cfg.speed * pressureBoost);
+      if (wantsCover && now < enemy.coverUntil && enemy.coverTarget.lengthSq() > 0 && enemy.navPosition.distanceTo(enemy.coverTarget) > 1.0) {
+        moveEnemyToward(enemy, enemy.coverTarget, dt, cfg.speed * 1.18);
+      } else if (!canSeePlayer && remembersPlayer && enemy.navPosition.distanceTo(engageTarget) > 1.8) {
+        // Investigate the last place the player was actually seen. No wall-hacking target tracking.
+        moveEnemyToward(enemy, engageTarget, dt, cfg.speed * .88);
+      } else if (!canSeePlayer && !remembersPlayer && enemy.navPosition.distanceTo(enemy.origin) > 2.5) {
+        moveEnemyToward(enemy, enemy.origin, dt, cfg.speed * .65);
+      } else if (cfg.behavior === 'rusher') {
+        const pressureBoost = (squad.sniper ? 1.18 : 1) * (now < enemy.squadReactionUntil ? 1.16 : 1);
+        if (dist > 1.45) moveEnemyToward(enemy, engageTarget, dt, cfg.speed * pressureBoost);
+      } else if (cfg.behavior === 'sniper') {
+        // Snipers relocate after firing or when the player closes the gap.
+        if (now < enemy.relocateUntil || dist < 11) {
+          const retreat = chooseEnemyRetreatPoint(enemy, target, dist < 11 ? 9 : 6);
+          moveEnemyToward(enemy, retreat, dt, 1.65);
+        }
       } else if (cfg.behavior === 'flanker') {
         camera.getWorldDirection(forward);
         forward.y = 0; forward.normalize();
         right.crossVectors(forward, camera.up).normalize();
         const side = squad.flankers.length > 1 ? (enemy.index % 2 ? 1 : -1) : enemy.flankSide;
-        const anchor = squad.heavy ? squad.heavy.navPosition.clone().lerp(target,.55) : target.clone();
+        const anchor = squad.heavy ? squad.heavy.navPosition.clone().lerp(engageTarget,.55) : engageTarget.clone();
         const flankTarget = anchor.addScaledVector(right, side * 8.5).addScaledVector(forward, -4.5);
         if (enemy.navPosition.distanceTo(flankTarget) > 2.2) moveEnemyToward(enemy, flankTarget, dt, cfg.speed);
       } else if (cfg.behavior === 'corrector') {
         camera.getWorldDirection(forward); forward.y = 0; forward.normalize();
         right.crossVectors(forward, camera.up).normalize();
         const correctionSide = enemy.index % 2 ? 1 : -1;
-        const correctionTarget = target.clone().addScaledVector(right, correctionSide * 5.5).addScaledVector(forward, -7.0);
+        const correctionTarget = engageTarget.clone().addScaledVector(right, correctionSide * 5.5).addScaledVector(forward, -7.0);
         if (dist > 8.5 || !enemyHasLineOfSight(enemy,target)) moveEnemyToward(enemy, correctionTarget, dt, cfg.speed);
       } else if (cfg.behavior === 'artist') {
         const phase = enemy.bossPhase || 1;
@@ -4689,7 +4864,8 @@ function updateEnemies(now, dt) {
         }
       } else if (cfg.behavior === 'heavy' || cfg.behavior === 'guardian') {
         const holdRange = cfg.behavior === 'guardian' ? 12 : (squad.rusher ? 17 : 13.5);
-        if (dist > holdRange) moveEnemyToward(enemy, target, dt, cfg.speed);
+        if (healthRatio < .24 && cfg.behavior === 'heavy') moveEnemyToward(enemy, chooseEnemyRetreatPoint(enemy, target, 5), dt, cfg.speed * .95);
+        else if (dist > holdRange) moveEnemyToward(enemy, engageTarget, dt, cfg.speed);
       } else if (cfg.behavior === 'rifleman') {
         const swayTarget = squad.heavy && squad.heavy !== enemy ? squad.heavy.navPosition.clone() : enemy.origin.clone();
         swayTarget.x += Math.sin(now * .00058 + enemy.phase) * 1.7 + (enemy.index % 2 ? 2.1 : -2.1);
@@ -4817,8 +4993,7 @@ function createPickup(type, x, z) {
 createPickup('ammo', -8, 6);
 createPickup('ammo', 18, -15);
 createPickup('ammo', -22, -18);
-createPickup('health', 8, -5);
-createPickup('health', -18, 18);
+createPickup('health', 8, -5);createPickup('health', -18, 18);
 createPickup('health', 24, 24);
 
 function updatePickups(now) {
@@ -4873,11 +5048,12 @@ for (let i = 0; i < 8; i++) {
   ));
 }
 let muzzleHideAt = 0;
-function flashMuzzle() {
+function flashMuzzle(profile = currentWeapon()) {
   muzzleFlash.rotation.z = Math.random() * Math.PI;
-  muzzleFlash.scale.setScalar(.85 + Math.random() * .35);
+  const scale = profile?.muzzleScale || 1;
+  muzzleFlash.scale.setScalar(scale * (.82 + Math.random() * .34));
   muzzleFlash.visible = true;
-  muzzleHideAt = performance.now() + 48;
+  muzzleHideAt = performance.now() + (profile === WEAPON_PROFILES.shotgun || profile === WEAPON_PROFILES.marker ? 64 : 42);
 }
 
 // Tiny paper casings are pooled. Automatic fire used to allocate/dispose a
@@ -4901,6 +5077,7 @@ function acquireShellCasing() {
 }
 function releaseShellCasing(casing) {
   casing.visible = false;
+  casing.scale.setScalar(1);
   weaponRig.remove(casing);
   if (shellCasingPool.length < MAX_SHELL_CASINGS) shellCasingPool.push(casing);
 }
@@ -4908,6 +5085,8 @@ function ejectCasing() {
   if (shellCasings.length >= MAX_SHELL_CASINGS || quality.fxScale < .55 && Math.random() < .45) return;
   const casing = acquireShellCasing();
   casing.position.set(.20, .07, -.02);
+  const casingScale = currentWeapon()?.casingScale || 1;
+  casing.scale.set(casingScale, casingScale * (currentWeaponId === 'shotgun' ? 1.35 : 1), casingScale);
   casing.rotation.set(Math.random(), Math.random(), Math.random());
   shellCasings.push({
     mesh: casing,
@@ -4998,48 +5177,48 @@ const WEAPON_PROFILES = {
     slot: 0, name: 'INK KNIFE', short: 'KNIFE', unlockRound: 1, melee: true,
     magSize: 0, reserveMax: 0, startReserve: 0, fireInterval: .46, reloadTime: 0,
     bodyDamage: 76, headDamage: 118, pellets: 1, spread: 0, meleeRange: 2.15,
-    recoil: .28, pitch: .018, muzzleZ: -.72, visualScale: [1, 1, 1], viewOffset: [.12, -.08, .10], handPos: [-.08, -.20, -.38], adsPos: [.10, -.36, -.60], adsFov: 64
+    recoil: .28, pitch: .018, muzzleZ: -.72, visualScale: [1, 1, 1], viewOffset: [.12, -.08, .10], handPos: [-.08, -.20, -.38], adsPos: [.10, -.36, -.60], adsFov: 64, adsSpeed:18, cameraPitch:.006, cameraYaw:.004, fovKick:.5, muzzleScale:.72, recoilRecovery:20, casingScale:.65
   },
   carbine: {
     slot: 1, name: 'SKETCH CARBINE', short: 'CARBINE', unlockRound: 1,
     magSize: 12, reserveMax: 84, startReserve: 48, fireInterval: .11, reloadTime: 1.85,
     bodyDamage: 38, headDamage: 82, pellets: 1, spread: 0,
-    recoil: .62, pitch: .030, muzzleZ: -1.31, visualScale: [1, 1, 1], viewOffset: [0, 0, 0], handPos: [-.13, -.17, -.58], adsPos: [.16, -.48, -.82], adsFov: 58
+    recoil: .62, pitch: .030, muzzleZ: -1.31, visualScale: [1, 1, 1], viewOffset: [0, 0, 0], handPos: [-.13, -.17, -.58], adsPos: [.16, -.48, -.82], adsFov: 58, adsSpeed:15, cameraPitch:.009, cameraYaw:.0045, fovKick:.75, muzzleScale:1.0, recoilRecovery:18, casingScale:1
   },
   pistol: {
     slot: 2, name: 'PENCIL PISTOL', short: 'PISTOL', unlockRound: 1,
     magSize: 9, reserveMax: 63, startReserve: 36, fireInterval: .24, reloadTime: 1.45,
     bodyDamage: 46, headDamage: 105, pellets: 1, spread: .0015,
     recoil: .48, pitch: .042, muzzleZ: -.72, visualScale: [1, 1, 1], viewOffset: [.13, -.02, .13], handPos: [-.04, -.20, -.24], adsPos: [.10, -.39, -.62], adsFov: 56,
-    magScale: [.58, .72, .58], magPos: [0, -.22, .10]
+    magScale: [.58, .72, .58], magPos: [0, -.22, .10], adsSpeed:20, cameraPitch:.014, cameraYaw:.007, fovKick:.9, muzzleScale:.82, recoilRecovery:23, casingScale:.72
   },
   shotgun: {
     slot: 3, name: 'CROSS-OUT SHOTGUN', short: 'SHOTGUN', unlockRound: 2,
     magSize: 6, reserveMax: 36, startReserve: 24, fireInterval: .58, reloadTime: 2.05,
     bodyDamage: 14, headDamage: 21, pellets: 8, spread: .030,
     recoil: 1.05, pitch: .070, muzzleZ: -1.58, visualScale: [1, 1, 1], viewOffset: [.01, -.015, .01], handPos: [-.13, -.17, -.76], adsPos: [.18, -.52, -.98], adsFov: 60,
-    magScale: [.78,.82,.74], magPos: [0,-.25,-.02]
+    magScale: [.78,.82,.74], magPos: [0,-.25,-.02], adsSpeed:11, cameraPitch:.030, cameraYaw:.012, fovKick:1.7, muzzleScale:1.55, recoilRecovery:12, casingScale:1.35
   },
   smg: {
     slot: 4, name: 'SCRIBBLE SMG', short: 'SMG', unlockRound: 3,
     magSize: 24, reserveMax: 144, startReserve: 72, fireInterval: .072, reloadTime: 1.62,
     bodyDamage: 22, headDamage: 47, pellets: 1, spread: .005,
     recoil: .38, pitch: .020, muzzleZ: -.98, visualScale: [1, 1, 1], viewOffset: [.075, -.025, .075], handPos: [-.10, -.18, -.48], adsPos: [.13, -.47, -.72], adsFov: 57,
-    magScale: [.72,1.06,.72], magPos: [0,-.26,-.12]
+    magScale: [.72,1.06,.72], magPos: [0,-.26,-.12], adsSpeed:18, cameraPitch:.0055, cameraYaw:.004, fovKick:.42, muzzleScale:.70, recoilRecovery:22, casingScale:.82
   },
   rifle: {
     slot: 5, name: 'RULER RIFLE', short: 'RULER', unlockRound: 4,
     magSize: 5, reserveMax: 35, startReserve: 20, fireInterval: .52, reloadTime: 2.15,
     bodyDamage: 76, headDamage: 180, pellets: 1, spread: 0,
     recoil: .92, pitch: .065, muzzleZ: -1.72, visualScale: [1, 1, 1], viewOffset: [0, 0, .045], handPos: [-.14, -.17, -.79], adsPos: [0, -.22, -.70], adsFov: 29, scoped: true,
-    magScale: [.76,.84,.76], magPos: [0,-.25,-.08]
+    magScale: [.76,.84,.76], magPos: [0,-.25,-.08], adsSpeed:9, cameraPitch:.026, cameraYaw:.008, fovKick:1.35, muzzleScale:1.18, recoilRecovery:11, casingScale:1.05
   },
   marker: {
     slot: 6, name: 'MARKER HEAVY', short: 'MARKER', unlockRound: 5,
     magSize: 8, reserveMax: 48, startReserve: 28, fireInterval: .34, reloadTime: 2.35,
     bodyDamage: 58, headDamage: 112, pellets: 1, spread: .004,
     recoil: 1.12, pitch: .075, muzzleZ: -1.46, visualScale: [1, 1, 1], viewOffset: [0, -.035, .035], handPos: [-.16, -.20, -.64], adsPos: [.20, -.60, -.98], adsFov: 61,
-    magScale: [1.05,1.08,1.0], magPos: [0,-.25,-.08]
+    magScale: [1.05,1.08,1.0], magPos: [0,-.25,-.08], adsSpeed:10, cameraPitch:.034, cameraYaw:.013, fovKick:1.65, muzzleScale:1.45, recoilRecovery:10, casingScale:1.2
   }
 };
 
@@ -5415,16 +5594,18 @@ function updateReloadAnimation(now) {
 function updateWeaponAnimation(now, dt) {
   weaponSwayX = THREE.MathUtils.damp(weaponSwayX, 0, 8, dt);
   weaponSwayY = THREE.MathUtils.damp(weaponSwayY, 0, 8, dt);
-  recoilKick = THREE.MathUtils.damp(recoilKick, 0, 18, dt);
-  recoilPitch = THREE.MathUtils.damp(recoilPitch, 0, 16, dt);
-  recoilYaw = THREE.MathUtils.damp(recoilYaw, 0, 15, dt);
-  recoilRoll = THREE.MathUtils.damp(recoilRoll, 0, 14, dt);
+  const w = currentWeapon();
+  const recovery = w.recoilRecovery || 16;
+  recoilKick = THREE.MathUtils.damp(recoilKick, 0, recovery, dt);
+  recoilPitch = THREE.MathUtils.damp(recoilPitch, 0, recovery * .88, dt);
+  recoilYaw = THREE.MathUtils.damp(recoilYaw, 0, recovery * .82, dt);
+  recoilRoll = THREE.MathUtils.damp(recoilRoll, 0, recovery * .78, dt);
 
   if (updateReloadAnimation(now)) return;
 
   const breathe = Math.sin(now * .0017) * .006;
-  const aimAmount = isAiming ? 1 : 0;
-  const w = currentWeapon();
+  aimBlend = THREE.MathUtils.damp(aimBlend, isAiming ? 1 : 0, w.adsSpeed || 14, dt);
+  const aimAmount = aimBlend;
   const ads = w.adsPos || [0, -.20, -.62];
   const normalX = activeWeaponBasePos.x - weaponSwayX * 1.15 + recoilYaw * .04;
   const normalY = activeWeaponBasePos.y + weaponSwayY * .75 + breathe - recoilKick * .018;
@@ -5433,7 +5614,7 @@ function updateWeaponAnimation(now, dt) {
   // Scoped rifles use the HUD optic as the sight picture. Lower the 3D rifle during
   // the transition, then hide it at full scope so the barrel/optic housing can never
   // sit over the reticle. Standard ADS weapons stay visible but use per-gun offsets.
-  const fullyScoped = isAiming && w.scoped && aimAmount > .98;
+  const fullyScoped = isAiming && w.scoped && aimAmount > .94;
   weaponRig.visible = !fullyScoped;
 
   weaponRig.position.set(
@@ -5812,7 +5993,6 @@ function updateMovement(dt) {
   forward.y = 0;
   forward.normalize();
   right.crossVectors(forward, camera.up).normalize();
-
   const inputMagnitude = IS_TOUCH_DEVICE ? Math.min(1, Math.hypot(ix, iz)) : 1;
   wish.set(0, 0, 0);
   wish.addScaledVector(forward, iz);
@@ -6572,13 +6752,24 @@ function performKnifeAttack(now, w) {
     awardInk(15 + (upgradeState.knifeHeal > 0 ? 20 : 0), 'CROSSOUT');
     updateHealthHud();
     showCombatMessage('CROSSOUT // HEALTH + AMMO + SPEED', 760);
-    spawnInkBurst(hit.point, 24, .72);
+    spawnInkBurst(hit.point, 24, .72, HOSTILE_RED);
     damageEnemy(enemy, enemy.hp + 5, part, hit.point, raycaster.ray.direction);
     return;
   }
   const damage = (part === 'head' ? w.headDamage * upgradeState.headshotMul : w.bodyDamage) * upgradeState.damageMul;
   damageEnemy(enemy, damage, part, hit.point, raycaster.ray.direction);
-  spawnInkBurst(hit.point, part === 'head' ? 12 : 8, .42);
+  spawnInkBurst(hit.point, part === 'head' ? 12 : 8, .42, HOSTILE_RED);
+}
+
+function alertEnemiesToPlayerGunshot(now) {
+  enemies.forEach(enemy => {
+    if (!enemy.alive || enemy.dying || !enemy.activeInRound) return;
+    const dist = enemy.navPosition.distanceTo(camera.position);
+    if (dist > 27) return;
+    // Hearing gives an approximate location, not perfect wall-hack knowledge.
+    enemy.lastSeenPlayerPos.copy(camera.position).add(new THREE.Vector3((Math.random()-.5)*2.4,0,(Math.random()-.5)*2.4));
+    enemy.lastSeenAt = Math.max(enemy.lastSeenAt, now - 650);
+  });
 }
 
 function fireTestShot() {
@@ -6607,8 +6798,16 @@ function fireTestShot() {
   ammoCurrent -= 1;
   syncCurrentWeaponAmmo();
   updateAmmoHud();
-  flashMuzzle();
+  flashMuzzle(w);
   playGunSound(currentWeaponId);
+  alertEnemiesToPlayerGunshot(now);
+  // Small real view kick gives each weapon weight. It is intentionally subtle so
+  // mobile aiming remains controllable and players can compensate naturally.
+  const pitchKick = (w.cameraPitch || .008) * (isAiming ? .72 : 1);
+  const yawKick = (Math.random() - .5) * 2 * (w.cameraYaw || .004) * (isAiming ? .7 : 1);
+  camera.rotation.x = THREE.MathUtils.clamp(camera.rotation.x - pitchKick, -1.48, 1.48);
+  camera.rotation.y += yawKick;
+  impactFovKick = Math.max(impactFovKick, w.fovKick || .55);
 
   recoilKick = Math.min(1.35, recoilKick + w.recoil);
   recoilPitch = Math.max(-.14, recoilPitch - (w.pitch + Math.random() * w.pitch * .45));
@@ -6710,7 +6909,7 @@ const inkParticles = [];
 const inkParticlePool = [];
 const inkParticleGeometry = new THREE.CircleGeometry(1, 6);
 const MAX_INK_PARTICLES = IS_TOUCH_DEVICE ? 70 : 120;
-function acquireInkParticle() {
+function acquireInkParticle(color = INK_DARK) {
   let mesh = inkParticlePool.pop();
   if (!mesh) {
     mesh = new THREE.Mesh(
@@ -6722,6 +6921,7 @@ function acquireInkParticle() {
   }
   mesh.visible = true;
   mesh.material.opacity = .78;
+  mesh.material.color.setHex(color);
   return mesh;
 }
 function releaseInkParticle(mesh) {
@@ -6729,12 +6929,12 @@ function releaseInkParticle(mesh) {
   mesh.scale.setScalar(1);
   if (inkParticlePool.length < MAX_INK_PARTICLES) inkParticlePool.push(mesh);
 }
-function spawnInkBurst(point, count = 6, spread = .32) {
+function spawnInkBurst(point, count = 6, spread = .32, color = INK_DARK) {
   const scaledCount = Math.max(1, Math.round(count * quality.fxScale));
   const available = Math.max(0, MAX_INK_PARTICLES - inkParticles.length);
   for (let i = 0; i < Math.min(scaledCount, available); i++) {
     const r = .022 + Math.random() * .05;
-    const dot = acquireInkParticle();
+    const dot = acquireInkParticle(color);
     dot.scale.setScalar(r);
     dot.position.copy(point).add(new THREE.Vector3((Math.random()-.5)*.10, (Math.random()-.5)*.10, (Math.random()-.5)*.10));
     dot.lookAt(camera.position);
@@ -6791,8 +6991,7 @@ function updatePerformanceManager(now, frameMs) {
   if (now - lastPerfAdjustAt >= AUTO_ADJUST_INTERVAL_MS) {
     longFrameRatio = perfWindowFrames ? perfWindowLongFrames / perfWindowFrames : 0;
 
-    // Manual presets are truly manual. This fixes the previous bug where even
-    // QUALITY could be silently pushed down toward 0.65 DPR by the adaptive path.
+    // Manual presets are truly manual. This fixes the previous bug where even    // QUALITY could be silently pushed down toward 0.65 DPR by the adaptive path.
     if (graphicsMode === 'auto' && now >= qualityWarmupUntil) {
       const bad = frameEmaMs > 20.5 || longFrameRatio > .18;
       const severe = frameEmaMs > 25.5 || longFrameRatio > .35;
@@ -6893,6 +7092,7 @@ function animate(now) {
   if (controlSessionActive() && triggerHeld) fireTestShot();
   updatePickups(now);
   updateTracers(now);
+  updateEnemyGroundSplats(now);
   updateWeaponAnimation(now, rawDt);
   if (muzzleFlash.visible && now >= muzzleHideAt) muzzleFlash.visible = false;
 

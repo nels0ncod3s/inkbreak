@@ -3,6 +3,8 @@
   --paper-bright: #fffdf5;
   --ink: #174d9a;
   --ink-soft: rgba(23, 77, 154, 0.48);
+  --hostile: #d92d34;
+  --hostile-dark: #8f1f25;
   --inkbreak-gesture-guard: 28px;
 }
 
@@ -333,9 +335,9 @@ html, body {
 #hitmarker span:nth-child(3) { transform: rotate(225deg); }
 #hitmarker span:nth-child(4) { transform: rotate(315deg); }
 #hitmarker.active { opacity: 1; transform: translate(-50%, -50%) scale(1.08) rotate(-2deg); }
-#hitmarker.kill span { width: 3px; height: 10px; }
+#hitmarker.kill span { width: 3px; height: 10px; background: var(--hostile); }
 #hitmarker.headshot { transform: translate(-50%, -50%) scale(1.22) rotate(7deg); }
-#hitmarker.headshot span { width: 3px; height: 11px; box-shadow: 0 0 0 1px rgba(23,77,154,.12); }
+#hitmarker.headshot span { width: 3px; height: 11px; background: var(--hostile); box-shadow: 0 0 0 1px rgba(217,45,52,.12); }
 #hitmarker.kill.headshot { transform: translate(-50%, -50%) scale(1.36) rotate(-8deg); }
 
 #combat-message {
@@ -995,8 +997,7 @@ body.story-mode #weapon-rack { opacity: .72; }
   margin: 8px 0 18px;
   font-size: clamp(31px, 9vw, 48px);
   line-height: .92;
-  letter-spacing: -.07em;
-  transform: skewX(-5deg) rotate(-.5deg);
+  letter-spacing: -.07em;  transform: skewX(-5deg) rotate(-.5deg);
 }
 .mobile-note p {
   margin: 0 0 24px;
@@ -1343,6 +1344,9 @@ body.scoped #arena-objective { opacity: 0 !important; }
 }
 .awareness-arrow::before { left: 0; transform: rotate(28deg); }
 .awareness-arrow::after { right: 0; transform: rotate(-28deg); }
+.awareness-arrow.enemy::before,
+.awareness-arrow.enemy::after { background: var(--hostile); }
+.awareness-arrow.enemy .awareness-dot { border-color: var(--hostile); }
 .awareness-arrow.enemy.recent::before,
 .awareness-arrow.enemy.recent::after { height: 3px; }
 .awareness-arrow.objective::before,
@@ -1993,7 +1997,6 @@ body.mobile-playing.aiming #mobile-look-zone .look-hint { opacity: .18; }
   z-index: 6;
   --touch-rot: -1.2deg;
 }
-
 #mobile-crouch {
   right: 114px;
   bottom: 14px;
