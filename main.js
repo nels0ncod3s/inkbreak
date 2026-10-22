@@ -997,7 +997,8 @@ function rebuildColliderGrid() {
   colliderGridDirty = false;
 }
 function nearbyColliders(x, z, radius = 1.5) {
-  if (colliderGridDirty) rebuildColliderGrid();  const minX = Math.floor((x-radius) / COLLIDER_CELL_SIZE);
+  if (colliderGridDirty) rebuildColliderGrid();
+  const minX = Math.floor((x-radius) / COLLIDER_CELL_SIZE);
   const maxX = Math.floor((x+radius) / COLLIDER_CELL_SIZE);
   const minZ = Math.floor((z-radius) / COLLIDER_CELL_SIZE);
   const maxZ = Math.floor((z+radius) / COLLIDER_CELL_SIZE);
@@ -1996,7 +1997,8 @@ function damageEnvironment(mesh, amount, hitPoint) {
   if (mesh.userData.envType === 'breakable') {
     mesh.userData.hp -= amount;
     spawnInkBurst(hitPoint, 6, .24);
-    if (mesh.userData.hp <= 0) {      removeColliderForMesh(mesh);
+    if (mesh.userData.hp <= 0) {
+      removeColliderForMesh(mesh);
       mesh.visible = false;
       spawnPaperBreakChunks(mesh.position.clone(), 18);
       playNoiseBurst(.03, .18, 1500);
@@ -2995,7 +2997,8 @@ function spawnDeathScribbles(enemy, headshot = false) {
 
 function updateDeathScribbles(now, dt) {
   for (let i = deathScribbles.length - 1; i >= 0; i--) {
-    const fx = deathScribbles[i];    const t = THREE.MathUtils.clamp((now - fx.born) / fx.duration, 0, 1);
+    const fx = deathScribbles[i];
+    const t = THREE.MathUtils.clamp((now - fx.born) / fx.duration, 0, 1);
     fx.group.position.addScaledVector(fx.drift, dt);
     fx.group.position.y -= dt * .38 * (0.4 + t);
     fx.group.rotation.y += fx.spin * dt;
@@ -3994,7 +3997,8 @@ function storySpawnIsSafe(point, radius = .62) {
   return enemyCanMoveAt(x,z,radius);
 }
 
-function findSafeStorySpawn(preferred, occupied = []) {  // Start with the authored position, then search nearby rings. This prevents a
+function findSafeStorySpawn(preferred, occupied = []) {
+  // Start with the authored position, then search nearby rings. This prevents a
   // contact from being placed inside a building if the story map changes later.
   const candidates = [preferred];
   const radii = [1.8, 3.2, 4.8, 6.4];
@@ -4993,7 +4997,8 @@ function createPickup(type, x, z) {
 createPickup('ammo', -8, 6);
 createPickup('ammo', 18, -15);
 createPickup('ammo', -22, -18);
-createPickup('health', 8, -5);createPickup('health', -18, 18);
+createPickup('health', 8, -5);
+createPickup('health', -18, 18);
 createPickup('health', 24, 24);
 
 function updatePickups(now) {
@@ -5993,6 +5998,7 @@ function updateMovement(dt) {
   forward.y = 0;
   forward.normalize();
   right.crossVectors(forward, camera.up).normalize();
+
   const inputMagnitude = IS_TOUCH_DEVICE ? Math.min(1, Math.hypot(ix, iz)) : 1;
   wish.set(0, 0, 0);
   wish.addScaledVector(forward, iz);
@@ -6991,7 +6997,8 @@ function updatePerformanceManager(now, frameMs) {
   if (now - lastPerfAdjustAt >= AUTO_ADJUST_INTERVAL_MS) {
     longFrameRatio = perfWindowFrames ? perfWindowLongFrames / perfWindowFrames : 0;
 
-    // Manual presets are truly manual. This fixes the previous bug where even    // QUALITY could be silently pushed down toward 0.65 DPR by the adaptive path.
+    // Manual presets are truly manual. This fixes the previous bug where even
+    // QUALITY could be silently pushed down toward 0.65 DPR by the adaptive path.
     if (graphicsMode === 'auto' && now >= qualityWarmupUntil) {
       const bad = frameEmaMs > 20.5 || longFrameRatio > .18;
       const severe = frameEmaMs > 25.5 || longFrameRatio > .35;

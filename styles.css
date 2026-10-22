@@ -997,7 +997,8 @@ body.story-mode #weapon-rack { opacity: .72; }
   margin: 8px 0 18px;
   font-size: clamp(31px, 9vw, 48px);
   line-height: .92;
-  letter-spacing: -.07em;  transform: skewX(-5deg) rotate(-.5deg);
+  letter-spacing: -.07em;
+  transform: skewX(-5deg) rotate(-.5deg);
 }
 .mobile-note p {
   margin: 0 0 24px;
@@ -1997,6 +1998,7 @@ body.mobile-playing.aiming #mobile-look-zone .look-hint { opacity: .18; }
   z-index: 6;
   --touch-rot: -1.2deg;
 }
+
 #mobile-crouch {
   right: 114px;
   bottom: 14px;
